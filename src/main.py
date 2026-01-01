@@ -1,3 +1,12 @@
+"""
+Micro Downloader - Compact Video/Audio Downloader
+Author: 0x3EF8
+Version: 2.0.0
+License: MIT
+
+A modern compact GUI-based video downloader with bundled FFmpeg and Deno support.
+"""
+
 import os
 import sys
 import tkinter as tk
@@ -6,333 +15,756 @@ import yt_dlp
 import threading
 import subprocess
 import platform
+import ctypes
 from PIL import Image, ImageTk
 import pystray
+from typing import Tuple
+
+# ============================================================================
+# CONSTANTS & CONFIGURATION
+# ============================================================================
+
+APP_NAME = "Micro Downloader"
+APP_VERSION = "2.0.0"
+APP_AUTHOR = "0x3EF8"
+APP_ID = f"{APP_AUTHOR}.MicroDownloader.{APP_VERSION}"
+
+# Color scheme
+COLORS = {
+    'bg_dark': '#1E1E1E',
+    'bg_medium': '#2C2C2C',
+    'bg_light': '#3D3D3D',
+    'accent': '#E31937',
+    'accent_hover': '#B8152C',
+    'accent_success': '#28A745',
+    'accent_warning': '#FFC107',
+    'text_primary': '#FFFFFF',
+    'text_secondary': '#B0B0B0',
+    'border': '#444444',
+}
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
 
 def resource_path(relative_path: str) -> str:
+    """Get absolute path to resource, works for dev and PyInstaller."""
     try:
-        base_path = sys._MEIPASS  
+        base_path = sys._MEIPASS
     except AttributeError:
-        base_path = os.path.dirname(os.path.abspath(__file__))
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
 
-# Define the path to the ICO file using our resource_path function.
-ICON_PATH = resource_path("../assets/logo.ico")
 
-# Check if FFmpeg is installed by attempting to run its version command.
-def check_ffmpeg_installed():
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-        return True
-    except Exception:
-        return False
+def get_binary_path(binary_name: str) -> str:
+    """Get the path to a bundled binary executable."""
+    if platform.system().lower() == "windows":
+        binary_name = f"{binary_name}.exe"
+    return resource_path(os.path.join("bin", binary_name))
 
-# Attempt to automatically install FFmpeg using winget (Windows only).
-def install_ffmpeg():
+
+def verify_binary(binary_path: str, version_arg: str = "-version", min_size: int = 0) -> Tuple[bool, str]:
+    """
+    Verify that a binary exists and is functional.
+    Returns (is_valid, error_message)
+    """
+    if not os.path.exists(binary_path):
+        return False, f"Binary not found: {binary_path}"
+    
+    if min_size > 0:
+        try:
+            if os.path.getsize(binary_path) < min_size:
+                return False, f"Binary appears corrupted (file too small)"
+        except OSError as e:
+            return False, f"Cannot read binary: {e}"
+    
     try:
-        messagebox.showinfo("Installing FFmpeg", "Attempting to install FFmpeg using winget...")
-        subprocess.run(["winget", "install", "-e", "--id=Gyan.FFmpeg"], check=True)
+        kwargs = {'capture_output': True, 'timeout': 10}
+        if platform.system().lower() == "windows":
+            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+        
+        result = subprocess.run([binary_path, version_arg], **kwargs)
+        if result.returncode != 0:
+            return False, "Binary failed to execute"
+    except subprocess.TimeoutExpired:
+        return False, "Binary timed out"
+    except PermissionError:
+        return False, "Permission denied"
     except Exception as e:
-        messagebox.showerror("Installation Failed",
-                             f"Automatic installation of FFmpeg failed.\nError: {str(e)}\n\nPlease install FFmpeg manually.")
+        return False, f"Verification failed: {e}"
+    
+    return True, ""
 
-# Custom rounded button widget implemented with a Canvas.
-class RoundedButton(tk.Canvas):
-    def __init__(self, parent, text, command=None, width=80, height=25, corner_radius=10, **kwargs):
-        super().__init__(parent, width=width, height=height, highlightthickness=0, bg='#2C2C2C', **kwargs)
+
+def format_file_size(size_bytes: int) -> str:
+    """Format bytes into human readable size."""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
+# ============================================================================
+# PATHS & VERIFICATION
+# ============================================================================
+
+ICON_PATH = resource_path(os.path.join("assets", "logo.ico"))
+FFMPEG_PATH = get_binary_path("ffmpeg")
+DENO_PATH = get_binary_path("deno")
+
+
+def check_dependencies() -> Tuple[bool, bool, str]:
+    """
+    Check all required dependencies.
+    Returns (ffmpeg_ok, deno_ok, error_message)
+    """
+    ffmpeg_ok, ffmpeg_err = verify_binary(FFMPEG_PATH, "-version", min_size=1_000_000)
+    deno_ok, _ = verify_binary(DENO_PATH, "--version")
+    
+    error_msg = ""
+    if not ffmpeg_ok:
+        error_msg = f"FFmpeg: {ffmpeg_err}"
+    
+    return ffmpeg_ok, deno_ok, error_msg
+
+
+# ============================================================================
+# CUSTOM WIDGETS
+# ============================================================================
+
+class ToolTip:
+    """Create tooltips for widgets."""
+    
+    def __init__(self, widget: tk.Widget, text: str, delay: int = 500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tooltip_window = None
+        self.scheduled_id = None
+        
+        widget.bind('<Enter>', self._schedule_tooltip)
+        widget.bind('<Leave>', self._hide_tooltip)
+        widget.bind('<Button-1>', self._hide_tooltip)
+    
+    def _schedule_tooltip(self, event=None):
+        self._hide_tooltip()
+        self.scheduled_id = self.widget.after(self.delay, self._show_tooltip)
+    
+    def _show_tooltip(self):
+        if self.tooltip_window:
+            return
+        
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        
+        self.tooltip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        
+        label = tk.Label(
+            tw, text=self.text,
+            background=COLORS['bg_light'],
+            foreground=COLORS['text_primary'],
+            relief='solid', borderwidth=1,
+            font=('Segoe UI', 9),
+            padx=6, pady=3
+        )
+        label.pack()
+    
+    def _hide_tooltip(self, event=None):
+        if self.scheduled_id:
+            self.widget.after_cancel(self.scheduled_id)
+            self.scheduled_id = None
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+
+
+class RoundedButton(tk.Frame):
+    """Modern button with hover effects using tk.Button internally."""
+    
+    def __init__(self, parent, text: str, command=None, width: int = 80, 
+                 height: int = 25, corner_radius: int = 8, 
+                 color: str = None, **kwargs):
+        super().__init__(parent, bg=COLORS['bg_medium'], **kwargs)
+        
         self.command = command
         self.text = text
-        self.corner_radius = corner_radius
-        self.width = width
-        self.height = height
-        self.normal_color = '#E31937'
-        self.hover_color = '#B8152C'
-        self.current_color = self.normal_color
-        # Bind events for hover and click effects.
-        self.bind('<Enter>', self.on_enter)
-        self.bind('<Leave>', self.on_leave)
-        self.bind('<Button-1>', self.on_click)
-        self.draw()
-
-    def draw(self):
-        # Redraw the button background and text.
-        self.delete('all')
-        self.create_rounded_rect(0, 0, self.width, self.height, self.corner_radius, self.current_color)
-        self.create_text(self.width / 2, self.height / 2, text=self.text, fill='white', font=('Arial', 8, 'bold'))
-
-    def create_rounded_rect(self, x1, y1, x2, y2, radius, color):
-        # Create a polygon that forms a rounded rectangle.
-        points = [
-            x1 + radius, y1, x2 - radius, y1, x2, y1,
-            x2, y1 + radius, x2, y2 - radius, x2, y2,
-            x2 - radius, y2, x1 + radius, y2, x1, y2,
-            x1, y2 - radius, x1, y1 + radius, x1, y1
-        ]
-        self.create_polygon(points, smooth=True, fill=color)
-
-    def on_enter(self, event=None):
-        self.current_color = self.hover_color
-        self.draw()
-
-    def on_leave(self, event=None):
-        self.current_color = self.normal_color
-        self.draw()
-
-    def on_click(self, event=None):
-        if self.command:
+        self.btn_width = width
+        self.btn_height = height
+        self.normal_color = color or COLORS['accent']
+        self.hover_color = COLORS['accent_hover']
+        self.enabled = True
+        
+        # Create actual button
+        self.button = tk.Button(
+            self,
+            text=text,
+            command=self._on_click,
+            bg=self.normal_color,
+            fg=COLORS['text_primary'],
+            activebackground=self.hover_color,
+            activeforeground=COLORS['text_primary'],
+            relief='flat',
+            bd=0,
+            font=('Segoe UI', 9, 'bold'),
+            cursor='hand2',
+            width=max(1, width // 10),
+            height=1,
+            padx=6,
+            pady=2
+        )
+        self.button.pack(fill='both', expand=True)
+        
+        # Hover effects
+        self.button.bind('<Enter>', self._on_enter)
+        self.button.bind('<Leave>', self._on_leave)
+    
+    def _on_enter(self, event=None):
+        if self.enabled:
+            self.button.config(bg=self.hover_color)
+    
+    def _on_leave(self, event=None):
+        if self.enabled:
+            self.button.config(bg=self.normal_color)
+    
+    def _on_click(self):
+        if self.enabled and self.command:
             self.command()
+    
+    def set_enabled(self, enabled: bool):
+        self.enabled = enabled
+        if enabled:
+            self.button.config(state='normal', bg=self.normal_color)
+        else:
+            self.button.config(state='disabled', bg=COLORS['bg_light'])
+    
+    def set_text(self, text: str):
+        self.text = text
+        self.button.config(text=text)
+    
+    def config(self, **kwargs):
+        if 'state' in kwargs:
+            self.set_enabled(kwargs['state'] != 'disabled')
 
-# Main GUI class for the YouTube downloader application.
+
+class StatusIndicator(tk.Canvas):
+    """Status indicator dot."""
+    
+    def __init__(self, parent, size: int = 10, **kwargs):
+        super().__init__(
+            parent, width=size, height=size,
+            highlightthickness=0, bg=COLORS['bg_medium'], **kwargs
+        )
+        self.size = size
+        self.status = 'ready'
+        self._draw()
+    
+    def _draw(self):
+        self.delete('all')
+        colors = {
+            'ready': COLORS['text_secondary'],
+            'downloading': COLORS['accent_warning'],
+            'success': COLORS['accent_success'],
+            'error': COLORS['accent']
+        }
+        color = colors.get(self.status, COLORS['text_secondary'])
+        padding = 2
+        self.create_oval(
+            padding, padding, self.size - padding, self.size - padding,
+            fill=color, outline=''
+        )
+    
+    def set_status(self, status: str):
+        self.status = status
+        self._draw()
+
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
+
 class YouTubeDownloaderGUI:
-    def __init__(self, root):
+    """Main application class for Micro Downloader."""
+    
+    def __init__(self, root: tk.Tk):
         self.root = root
-        # Load and set the window icon from the ICO file.
+        self.root.title(APP_NAME)
+        self._style_applied = False
+        self._is_restoring = False
+        self._offset_x = 0
+        self._offset_y = 0
+        self.downloading = False
+        self.stop_requested = False
+        self.tray_icon = None
+        
+        # Check dependencies
+        self.ffmpeg_ok, self.deno_ok, self.dep_error = check_dependencies()
+        
+        # Initialize UI
+        self._setup_window()
+        self._setup_icon()
+        self._setup_styles()
+        self._create_title_bar()
+        self._create_main_content()
+        self._setup_bindings()
+        
+        # Apply window style after UI is ready
+        self.root.after(50, self._initialize_window_style)
+        
+        # Show dependency warning if needed
+        if not self.ffmpeg_ok:
+            self.root.after(100, lambda: self._show_dependency_error())
+    
+    def _setup_window(self):
+        """Configure main window properties."""
+        self.root.config(bg=COLORS['bg_medium'])
+        
+        if platform.system().lower() == "windows":
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+            except Exception:
+                pass
+    
+    def _setup_icon(self):
+        """Load and set application icon."""
         try:
             pil_image = Image.open(ICON_PATH).resize((20, 20), Image.Resampling.LANCZOS)
             self.logo_image = ImageTk.PhotoImage(pil_image)
             self.root.iconphoto(True, self.logo_image)
-        except Exception as e:
-            messagebox.showerror("Asset Error", f"Could not load icon from {ICON_PATH}\n{e}")
+            if os.path.exists(ICON_PATH):
+                self.root.iconbitmap(ICON_PATH)
+        except Exception:
             self.logo_image = None
-
-        self.root.overrideredirect(True)  # Remove default window borders.
-        self.root.config(bg='#2C2C2C')
-        self._offset_x = 0
-        self._offset_y = 0
-
-        # Create a custom title bar.
-        self.title_bar = tk.Frame(root, bg='#2C2C2C', height=25, relief='flat')
-        self.title_bar.pack(fill='x', side='top')
-
-        # If the icon was loaded, display it in the title bar.
-        if self.logo_image:
-            self.logo_label = tk.Label(self.title_bar, image=self.logo_image, bg='#2C2C2C')
-            self.logo_label.pack(side='left', padx=(5, 0))
-            self.logo_label.bind('<Button-1>', self.click_title_bar)
-            self.logo_label.bind('<B1-Motion>', self.drag_window)
-
-        self.title_label = tk.Label(self.title_bar, text="YT Grabber (0x3EF8)", bg='#2C2C2C', fg='white', font=('Arial', 10, 'bold'))
-        self.title_label.pack(side='left', padx=0)
-
-        # Create close and minimize buttons.
-        self.close_btn = tk.Button(self.title_bar, text='X', command=self.exit_app,
-                                   bg='#2C2C2C', fg='white', bd=0, font=('Arial', 10, 'bold'),
-                                   activebackground='#B8152C', activeforeground='white')
-        self.close_btn.pack(side='right', padx=5)
-        self.minimize_btn = tk.Button(self.title_bar, text='─', command=self.minimize_to_tray,
-                                      bg='#2C2C2C', fg='white', bd=0, font=('Arial', 10, 'bold'),
-                                      activebackground='#444', activeforeground='white')
-        self.minimize_btn.pack(side='right', padx=5)
-
-        # Bind dragging events to the title bar.
-        self.title_bar.bind('<Button-1>', self.click_title_bar)
-        self.title_bar.bind('<B1-Motion>', self.drag_window)
-        self.title_label.bind('<Button-1>', self.click_title_bar)
-        self.title_label.bind('<B1-Motion>', self.drag_window)
-        self.root.bind("<Map>", lambda event: self.root.overrideredirect(True))
-
-        # Setup the main content frame.
-        self.main_frame = ttk.Frame(root, padding=0, style='Modern.TFrame')
-        self.main_frame.pack(fill='both', expand=True)
-
-        # Configure styles for various widgets.
+    
+    def _setup_styles(self):
+        """Configure ttk styles."""
         self.style = ttk.Style()
         self.style.theme_use("clam")
-        self.style.configure('Modern.TFrame', background='#2C2C2C')
-        self.style.configure('Modern.TLabel', background='#2C2C2C', foreground='white', font=('Arial', 10, 'bold'))
-        self.style.configure("Modern.Horizontal.TProgressbar",
-                             troughcolor='#3D3D3D',
-                             background='#E31937',
-                             borderwidth=1,
-                             bordercolor='#444',
-                             relief='flat')
-        self.style.configure("Dark.TCombobox",
-                             foreground="white",
-                             background="#2C2C2C",
-                             fieldbackground="#2C2C2C",
-                             bordercolor="#444",
-                             lightcolor="#2C2C2C",
-                             darkcolor="#2C2C2C",
-                             insertcolor="white",
-                             arrowcolor="white",
-                             arrowsize=15,
-                             borderwidth=1)
-        self.style.map("Dark.TCombobox",
-                       fieldbackground=[('readonly', '#2C2C2C')],
-                       foreground=[('readonly', 'white')],
-                       background=[('readonly', '#2C2C2C')],
-                       bordercolor=[('focus', '#444'), ('active', '#444'), ('!focus', '#444')])
-        self.root.option_add('*TCombobox*Listbox.background', '#2C2C2C')
-        self.root.option_add('*TCombobox*Listbox.foreground', 'white')
-        self.root.option_add('*TCombobox*Listbox.selectBackground', '#444444')
-        self.root.option_add('*TCombobox*Listbox.selectForeground', 'white')
-        self.root.option_add('*TCombobox*Listbox.borderwidth', 0)
-
-        # Input for the YouTube video URL.
-        ttk.Label(self.main_frame, text="Video URL:", style='Modern.TLabel').grid(row=0, column=0, sticky='w', padx=5, pady=5)
-        self.url_entry = tk.Entry(self.main_frame, width=30, bg='#3D3D3D', fg='white',
-                                  insertbackground='white', relief='flat', font=('Arial', 10))
-        self.url_entry.grid(row=0, column=1, columnspan=2, sticky='ew', padx=5, pady=5)
-
-        # Input for the download save location.
-        ttk.Label(self.main_frame, text="Save to:", style='Modern.TLabel').grid(row=1, column=0, sticky='w', padx=5, pady=5)
-        self.save_path = tk.StringVar(value=os.path.expanduser("~/Downloads"))
-        self.location_entry = tk.Entry(self.main_frame, textvariable=self.save_path, width=25,
-                                       bg='#3D3D3D', fg='white', font=('Arial', 10), relief='flat')
-        self.location_entry.grid(row=1, column=1, sticky='ew', padx=5, pady=5)
-
-        # Button to browse for a folder.
-        browse_button = RoundedButton(self.main_frame, text="Browse", command=self.browse_location, width=80, height=25)
-        browse_button.grid(row=1, column=2, padx=5, pady=5)
-
-        # Format selection: Video (MP4) or Audio (MP3)
-        ttk.Label(self.main_frame, text="Format:", style='Modern.TLabel').grid(row=2, column=0, sticky='w', padx=5, pady=5)
-        self.format_type = tk.StringVar(value="video")
-        radio_style = {'bg': '#2C2C2C', 'fg': 'white', 'selectcolor': '#E31937', 'font': ('Arial', 8, 'bold'),
-                       'activebackground': '#2C2C2C', 'activeforeground': 'white'}
-        video_radio = tk.Radiobutton(self.main_frame, text="Video (MP4)", variable=self.format_type,
-                                     value="video", command=self.update_quality_options, **radio_style)
-        audio_radio = tk.Radiobutton(self.main_frame, text="Audio (MP3)", variable=self.format_type,
-                                     value="audio", command=self.update_quality_options, **radio_style)
-        video_radio.grid(row=2, column=1, sticky='w', padx=5, pady=5)
-        audio_radio.grid(row=2, column=2, sticky='w', padx=5, pady=5)
-
-        # Dropdown for quality selection.
-        ttk.Label(self.main_frame, text="Quality:", style='Modern.TLabel').grid(row=3, column=0, sticky='w', padx=5, pady=5)
-        self.quality_var = tk.StringVar()
-        self.quality_combo = ttk.Combobox(self.main_frame, textvariable=self.quality_var,
-                                          state='readonly', style='Dark.TCombobox', font=('Arial', 10), width=25)
-        self.quality_combo.grid(row=3, column=1, columnspan=2, sticky='ew', padx=5, pady=5)
-        self.update_quality_options()
-
-        # Progress bar and download button container.
-        control_frame = ttk.Frame(self.main_frame, style='Modern.TFrame')
-        control_frame.grid(row=4, column=0, columnspan=3, sticky='ew', padx=5, pady=0)
-        control_frame.grid_columnconfigure(0, weight=1)
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(control_frame, variable=self.progress_var,
-                                            maximum=100, style="Modern.Horizontal.TProgressbar")
-        self.progress_bar.grid(row=0, column=0, sticky='ew', padx=5, pady=2)
-        self.download_button = RoundedButton(control_frame, text="Download",
-                                             command=self.start_download, width=100, height=30)
-        self.download_button.grid(row=0, column=1, padx=5, pady=2)
-        self.status_label = ttk.Label(self.main_frame, text="Ready", style='Modern.TLabel', font=('Arial', 8, 'bold'))
-        self.status_label.grid(row=5, column=0, columnspan=3, sticky='w', padx=5, pady=2)
-
-        self.downloading = False
-        self.stop_requested = False
-
-    def minimize_to_tray(self):
-        # Minimize the app to the system tray.
-        self.root.withdraw()
-        try:
-            tray_icon_image = Image.open(ICON_PATH)
-        except Exception as e:
-            messagebox.showerror("Tray Icon Error", f"Could not load tray icon.\n{e}")
-            return
-        menu = pystray.Menu(
-            pystray.MenuItem('Restore', self.restore_from_tray),
-            pystray.MenuItem('Exit', self.exit_app)
+        
+        self.style.configure('Modern.TFrame', background=COLORS['bg_medium'])
+        self.style.configure(
+            'Modern.TLabel',
+            background=COLORS['bg_medium'],
+            foreground=COLORS['text_primary'],
+            font=('Segoe UI', 10)
         )
-        self.tray_icon = pystray.Icon("YT Grabber", tray_icon_image, "YT Grabber", menu)
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
-
-    def restore_from_tray(self, icon=None, item=None):
-        if icon:
-            icon.stop()
-        self.root.deiconify()
-
-    def click_title_bar(self, event):
-        # Store initial click position for window dragging.
+        self.style.configure(
+            "Modern.Horizontal.TProgressbar",
+            troughcolor=COLORS['bg_light'],
+            background=COLORS['accent'],
+            borderwidth=0,
+            relief='flat'
+        )
+        self.style.configure(
+            "Dark.TCombobox",
+            foreground=COLORS['text_primary'],
+            background=COLORS['bg_medium'],
+            fieldbackground=COLORS['bg_light'],
+            bordercolor=COLORS['border'],
+            arrowcolor=COLORS['text_primary'],
+            borderwidth=1
+        )
+        self.style.map(
+            "Dark.TCombobox",
+            fieldbackground=[('readonly', COLORS['bg_light'])],
+            foreground=[('readonly', COLORS['text_primary'])],
+            background=[('readonly', COLORS['bg_medium'])]
+        )
+        
+        # Combobox listbox styling
+        self.root.option_add('*TCombobox*Listbox.background', COLORS['bg_light'])
+        self.root.option_add('*TCombobox*Listbox.foreground', COLORS['text_primary'])
+        self.root.option_add('*TCombobox*Listbox.selectBackground', COLORS['accent'])
+        self.root.option_add('*TCombobox*Listbox.selectForeground', COLORS['text_primary'])
+    
+    def _create_title_bar(self):
+        """Create custom title bar."""
+        self.title_bar = tk.Frame(
+            self.root, bg=COLORS['bg_dark'], height=25
+        )
+        self.title_bar.pack(fill='x', side='top')
+        
+        # Logo
+        if self.logo_image:
+            logo_label = tk.Label(
+                self.title_bar, image=self.logo_image,
+                bg=COLORS['bg_dark']
+            )
+            logo_label.pack(side='left', padx=(5, 2))
+            logo_label.bind('<Button-1>', self._click_title_bar)
+            logo_label.bind('<B1-Motion>', self._drag_window)
+            ToolTip(logo_label, f"Developed by {APP_AUTHOR}", delay=300)
+        
+        # Title
+        title_text = f"{APP_NAME} v{APP_VERSION}"
+        self.title_label = tk.Label(
+            self.title_bar, text=title_text,
+            bg=COLORS['bg_dark'], fg=COLORS['text_primary'],
+            font=('Segoe UI', 10, 'bold')
+        )
+        self.title_label.pack(side='left', padx=(0, 5))
+        ToolTip(self.title_label, f"Developed by {APP_AUTHOR}", delay=300)
+        
+        # Window controls
+        btn_style = {
+            'bg': COLORS['bg_dark'],
+            'fg': COLORS['text_primary'],
+            'bd': 0,
+            'font': ('Segoe UI', 10),
+            'width': 3,
+            'activeforeground': COLORS['text_primary']
+        }
+        
+        self.close_btn = tk.Button(
+            self.title_bar, text='x', command=self.exit_app,
+            activebackground=COLORS['accent'], **btn_style
+        )
+        self.close_btn.pack(side='right', padx=(0, 5))
+        
+        self.minimize_btn = tk.Button(
+            self.title_bar, text='-', command=self.minimize_to_tray,
+            activebackground=COLORS['bg_light'], **btn_style
+        )
+        self.minimize_btn.pack(side='right')
+        
+        # Tooltips
+        ToolTip(self.minimize_btn, "Minimize to tray")
+        ToolTip(self.close_btn, "Close")
+    
+    def _create_main_content(self):
+        """Create main content area."""
+        self.main_frame = ttk.Frame(self.root, padding=8, style='Modern.TFrame')
+        self.main_frame.pack(fill='both', expand=True)
+        
+        # URL Input
+        url_frame = ttk.Frame(self.main_frame, style='Modern.TFrame')
+        url_frame.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(url_frame, text="URL:", style='Modern.TLabel').pack(side='left')
+        
+        self.url_entry = tk.Entry(
+            url_frame, width=30,
+            bg=COLORS['bg_light'], fg=COLORS['text_primary'],
+            insertbackground=COLORS['text_primary'],
+            relief='flat', font=('Segoe UI', 10),
+            highlightthickness=1, highlightcolor=COLORS['accent'],
+            highlightbackground=COLORS['border']
+        )
+        self.url_entry.pack(side='left', padx=(5, 5), fill='x', expand=True)
+        ToolTip(self.url_entry, "Paste video URL")
+        
+        # Paste button
+        self.paste_btn = RoundedButton(
+            url_frame, text="Paste",
+            command=self._do_paste, width=60, height=25
+        )
+        self.paste_btn.pack(side='left')
+        ToolTip(self.paste_btn, "Paste URL from clipboard (Ctrl+V)")
+        
+        # Save Location
+        save_frame = ttk.Frame(self.main_frame, style='Modern.TFrame')
+        save_frame.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(save_frame, text="Save:", style='Modern.TLabel').pack(side='left')
+        
+        self.save_path = tk.StringVar(value=os.path.expanduser("~/Downloads"))
+        self.location_entry = tk.Entry(
+            save_frame, textvariable=self.save_path, width=28,
+            bg=COLORS['bg_light'], fg=COLORS['text_primary'],
+            relief='flat', font=('Segoe UI', 10),
+            highlightthickness=1, highlightbackground=COLORS['border']
+        )
+        self.location_entry.pack(side='left', padx=(5, 5), fill='x', expand=True)
+        
+        self.browse_btn = RoundedButton(
+            save_frame, text="Browse",
+            command=self._browse_location, width=60, height=25
+        )
+        self.browse_btn.pack(side='left')
+        
+        # Format Selection
+        format_frame = ttk.Frame(self.main_frame, style='Modern.TFrame')
+        format_frame.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(format_frame, text="Format:", style='Modern.TLabel').pack(side='left')
+        
+        self.format_type = tk.StringVar(value="video")
+        radio_style = {
+            'bg': COLORS['bg_medium'],
+            'fg': COLORS['text_primary'],
+            'selectcolor': COLORS['accent'],
+            'activebackground': COLORS['bg_medium'],
+            'activeforeground': COLORS['text_primary'],
+            'font': ('Segoe UI', 9),
+            'highlightthickness': 0
+        }
+        
+        video_radio = tk.Radiobutton(
+            format_frame, text="Video",
+            variable=self.format_type, value="video",
+            command=self._update_quality_options, **radio_style
+        )
+        video_radio.pack(side='left', padx=(10, 8))
+        
+        audio_radio = tk.Radiobutton(
+            format_frame, text="Audio",
+            variable=self.format_type, value="audio",
+            command=self._update_quality_options, **radio_style
+        )
+        audio_radio.pack(side='left')
+        
+        # Quality Selection
+        quality_frame = ttk.Frame(self.main_frame, style='Modern.TFrame')
+        quality_frame.pack(fill='x', pady=(0, 5))
+        
+        ttk.Label(quality_frame, text="Quality:", style='Modern.TLabel').pack(side='left')
+        
+        self.quality_var = tk.StringVar()
+        self.quality_combo = ttk.Combobox(
+            quality_frame, textvariable=self.quality_var,
+            state='readonly', style='Dark.TCombobox',
+            font=('Segoe UI', 10), width=25
+        )
+        self.quality_combo.pack(side='left', padx=(5, 0), fill='x', expand=True)
+        self._update_quality_options()
+        
+        # Progress Section
+        progress_frame = ttk.Frame(self.main_frame, style='Modern.TFrame')
+        progress_frame.pack(fill='x', pady=(5, 5))
+        
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(
+            progress_frame, variable=self.progress_var,
+            maximum=100, style="Modern.Horizontal.TProgressbar",
+            length=180
+        )
+        self.progress_bar.pack(side='left', fill='x', expand=True, padx=(0, 8))
+        
+        self.download_btn = RoundedButton(
+            progress_frame, text="Download",
+            command=self._start_download, width=100, height=28
+        )
+        self.download_btn.pack(side='left')
+        
+        # Status Bar
+        status_frame = ttk.Frame(self.main_frame, style='Modern.TFrame')
+        status_frame.pack(fill='x', pady=(2, 0))
+        
+        self.status_indicator = StatusIndicator(status_frame, size=8)
+        self.status_indicator.pack(side='left', padx=(0, 5))
+        
+        self.status_label = tk.Label(
+            status_frame, text="Ready",
+            bg=COLORS['bg_medium'], fg=COLORS['text_secondary'],
+            font=('Segoe UI', 8)
+        )
+        self.status_label.pack(side='left')
+    
+    def _setup_bindings(self):
+        """Setup event bindings."""
+        self.title_bar.bind('<Button-1>', self._click_title_bar)
+        self.title_bar.bind('<B1-Motion>', self._drag_window)
+        self.title_label.bind('<Button-1>', self._click_title_bar)
+        self.title_label.bind('<B1-Motion>', self._drag_window)
+        
+        # Keyboard shortcuts
+        self.root.bind('<Control-v>', lambda e: self._paste_url())
+        self.root.bind('<Return>', lambda e: self._start_download())
+        self.root.bind('<Escape>', lambda e: self._stop_download())
+    
+    def _initialize_window_style(self):
+        """Initialize custom window style."""
+        if self._style_applied:
+            return
+        
+        self.root.overrideredirect(True)
+        
+        if platform.system().lower() == "windows":
+            self.root.after(10, self._apply_window_style)
+    
+    def _apply_window_style(self):
+        """Apply Windows-specific window style for taskbar visibility."""
+        if self._style_applied:
+            return
+        
+        if platform.system().lower() == "windows":
+            try:
+                hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+                if hwnd == 0:
+                    hwnd = self.root.winfo_id()
+                
+                GWL_EXSTYLE = -20
+                WS_EX_APPWINDOW = 0x00040000
+                WS_EX_TOOLWINDOW = 0x00000080
+                
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+                
+                SWP_FRAMECHANGED = 0x0020
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_NOZORDER = 0x0004
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, 0, 0, 0, 0, 0,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                )
+                
+                self._style_applied = True
+            except Exception:
+                pass
+    
+    def _show_dependency_error(self):
+        """Show dependency error message."""
+        msg = (
+            f"FFmpeg is required but not found.\n\n"
+            f"Please place ffmpeg.exe in:\n{os.path.dirname(FFMPEG_PATH)}\n\n"
+            f"Download from: https://ffmpeg.org/download.html"
+        )
+        messagebox.showerror("Missing Dependency", msg)
+    
+    def _do_paste(self):
+        """Paste URL from clipboard."""
+        try:
+            self.url_entry.focus_set()
+            url = self.root.clipboard_get()
+            self.url_entry.delete(0, tk.END)
+            self.url_entry.insert(0, url.strip())
+        except tk.TclError:
+            pass
+        except Exception:
+            pass
+    
+    def _paste_url(self):
+        """Paste URL from clipboard - keyboard shortcut."""
+        self._do_paste()
+    
+    def _click_title_bar(self, event):
+        """Store click position for dragging."""
         self._offset_x = event.x
         self._offset_y = event.y
-
-    def drag_window(self, event):
-        # Update window position based on mouse movement.
+    
+    def _drag_window(self, event):
+        """Handle window dragging."""
         x = self.root.winfo_x() + (event.x - self._offset_x)
         y = self.root.winfo_y() + (event.y - self._offset_y)
         self.root.geometry(f"+{x}+{y}")
-
-    def exit_app(self, icon=None, item=None):
-        # Cleanly exit the application.
-        if hasattr(self, 'tray_icon'):
-            self.tray_icon.stop()
-        self.root.destroy()
-
-    def update_quality_options(self):
-        # Set quality options based on the selected format.
-        if self.format_type.get() == "video":
-            qualities = ["2160p (4K)", "1440p (2K)", "1080p (Full HD)",
-                         "720p (HD)", "480p", "360p", "240p", "144p"]
-        else:
-            qualities = ["320kbps (High Quality)", "256kbps (Good Quality)",
-                         "192kbps (Medium Quality)", "128kbps (Low Quality)"]
-        self.quality_combo['values'] = qualities
-        default = qualities[2] if self.format_type.get() == "video" else qualities[0]
-        self.quality_combo.set(default)
-
-    def get_format_string(self):
-        # Build the yt_dlp format string from the selected quality.
-        if self.format_type.get() == "video":
-            resolution = self.quality_var.get().split()[0].replace('p', '')
-            return f'bestvideo[height<={resolution}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]'
-        else:
-            bitrate = self.quality_var.get().split()[0].replace('kbps', '')
-            return f'bestaudio[abr<={bitrate}][ext=m4a]/bestaudio'
-
-    def browse_location(self):
+    
+    def _browse_location(self):
+        """Open folder browser dialog."""
         directory = filedialog.askdirectory(initialdir=self.save_path.get())
         if directory:
             self.save_path.set(directory)
-
-    def update_progress(self, d):
-        # Update the progress bar and status label during download.
-        if self.stop_requested:
-            raise Exception("Download stopped by user")
-        if d.get('status') == 'downloading':
-            try:
-                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-                downloaded = d.get('downloaded_bytes', 0)
-                progress = (downloaded / total) * 100 if total else 0
-                title = d.get('info_dict', {}).get('title', 'Unknown')
-                if len(title) > 50:
-                    title = title[:50] + "..."
-                playlist_index = d.get('playlist_index') or d.get('info_dict', {}).get('playlist_index')
-                playlist_count = d.get('playlist_count') or d.get('info_dict', {}).get('playlist_count')
-                status_text = f"{title}: {progress:.0f}%"
-                if playlist_index is not None and playlist_count is not None and int(playlist_count) > 1:
-                    status_text += f" ({playlist_index}/{playlist_count})"
-                self.progress_var.set(progress)
-                self.status_label.config(text=status_text)
-                self.root.update_idletasks()
-            except Exception as e:
-                print(f"Progress update error: {e}")
-
-    def download_video(self):
+    
+    def _update_quality_options(self):
+        """Update quality dropdown based on format selection."""
+        if self.format_type.get() == "video":
+            qualities = [
+                "2160p (4K)", "1440p (2K)", "1080p (Full HD)",
+                "720p (HD)", "480p", "360p", "240p", "144p"
+            ]
+            default = qualities[2]
+        else:
+            qualities = [
+                "320kbps (High)", "256kbps (Good)",
+                "192kbps (Medium)", "128kbps (Low)"
+            ]
+            default = qualities[0]
+        
+        self.quality_combo['values'] = qualities
+        self.quality_combo.set(default)
+    
+    def _get_format_string(self) -> str:
+        """Build yt-dlp format string."""
+        if self.format_type.get() == "video":
+            resolution = self.quality_var.get().split()[0].replace('p', '')
+            return f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/bestvideo+bestaudio/best'
+        else:
+            bitrate = self.quality_var.get().split()[0].replace('kbps', '')
+            return f'bestaudio[abr<={bitrate}]/bestaudio/best'
+    
+    def _update_status(self, text: str, status: str = 'ready'):
+        """Update status bar."""
+        self.status_label.config(text=text)
+        self.status_indicator.set_status(status)
+    
+    def _download_video(self):
+        """Execute download in background thread."""
         url = self.url_entry.get().strip()
+        
         if not url:
-            messagebox.showerror("Error", "Please enter a valid URL")
-            self.reset_download_state()
+            self._reset_download_state()
             return
-        if platform.system().lower() != "windows":
-            messagebox.showerror("Windows Only", "This script only supports Windows.\nPlease install FFmpeg manually if you are on another OS.")
-            self.reset_download_state()
+        
+        if not self.ffmpeg_ok:
+            self._show_dependency_error()
+            self._reset_download_state()
             return
-        if not check_ffmpeg_installed():
-            install_ffmpeg()
-            if not check_ffmpeg_installed():
-                messagebox.showerror("FFmpeg Required", "FFmpeg is not installed and could not be installed automatically.\nPlease install FFmpeg manually and try again.")
-                self.reset_download_state()
-                return
-        self.download_button.config(state='disabled')
-        self.status_label.config(text="Hold tight! Your download is getting ready...")
-        ydl_opts = {
-            'format': self.get_format_string(),
-            'outtmpl': os.path.join(self.save_path.get(), '%(title)s.%(ext)s'),
-            'progress_hooks': [self.update_progress],
-            'merge_output_format': 'mp4',
-            'postprocessors': []
+        
+        self._update_status("Fetching video info...", 'downloading')
+        
+        # First extract info to get playlist entries
+        extract_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': 'in_playlist',
         }
+        
+        if self.deno_ok:
+            extract_opts['js_runtimes'] = {'deno': {'path': DENO_PATH}}
+        
+        playlist_entries = []
+        playlist_title = None
+        
+        try:
+            with yt_dlp.YoutubeDL(extract_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                if info:
+                    # Check if it's a playlist
+                    if 'entries' in info:
+                        playlist_title = info.get('title', 'Playlist')
+                        entries = list(info['entries'])
+                        for entry in entries:
+                            if entry:
+                                playlist_entries.append({
+                                    'title': entry.get('title', 'Unknown'),
+                                    'url': entry.get('url') or entry.get('webpage_url') or f"https://youtube.com/watch?v={entry.get('id')}",
+                                    'id': entry.get('id')
+                                })
+                    else:
+                        # Single video
+                        playlist_entries.append({
+                            'title': info.get('title', 'Unknown'),
+                            'url': url,
+                            'id': info.get('id')
+                        })
+        except Exception as e:
+            # If extraction fails, just try to download directly
+            playlist_entries = [{'title': 'Unknown', 'url': url, 'id': None}]
+        
+        # Show playlist info
+        if playlist_title and len(playlist_entries) > 1:
+            self._update_status(f"Playlist: {playlist_title} ({len(playlist_entries)} videos)", 'downloading')
+        
+        # Now download each entry
+        ydl_opts = {
+            'format': self._get_format_string(),
+            'outtmpl': os.path.join(self.save_path.get(), '%(title)s.%(ext)s'),
+            'merge_output_format': 'mp4',
+            'ffmpeg_location': os.path.dirname(FFMPEG_PATH),
+            'postprocessors': [],
+            'quiet': True,
+            'no_warnings': True,
+            'remote_components': ['ejs:github'],
+            'noplaylist': True,  # Download one at a time
+        }
+        
+        if self.deno_ok:
+            ydl_opts['js_runtimes'] = {'deno': {'path': DENO_PATH}}
+        
         if self.format_type.get() == "video":
             ydl_opts['postprocessors'].append({
                 'key': 'FFmpegVideoConvertor',
@@ -344,47 +776,166 @@ class YouTubeDownloaderGUI:
                 'preferredcodec': 'mp3',
                 'preferredquality': self.quality_var.get().split()[0]
             })
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            self.status_label.config(text="Download completed!")
-            messagebox.showinfo("Success", "Download completed successfully!")
-        except Exception as e:
-            if str(e) == "Download stopped by user":
-                self.status_label.config(text="Download stopped!")
+        
+        completed_count = 0
+        total_count = len(playlist_entries)
+        
+        for i, entry in enumerate(playlist_entries):
+            if self.stop_requested:
+                break
+            
+            # Create progress hook for this specific download
+            def make_progress_hook(entry_index, entry_data):
+                def hook(d):
+                    if self.stop_requested:
+                        raise Exception("Download stopped by user")
+                    
+                    if d.get('status') == 'downloading':
+                        try:
+                            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                            downloaded = d.get('downloaded_bytes', 0)
+                            progress = (downloaded / total) * 100 if total else 0
+                            
+                            title = d.get('info_dict', {}).get('title', entry_data['title'])
+                            if len(title) > 35:
+                                short_title = title[:35] + "..."
+                            else:
+                                short_title = title
+                            
+                            speed = d.get('speed')
+                            speed_str = f" - {format_file_size(int(speed))}/s" if speed else ""
+                            
+                            self.progress_var.set(progress)
+                            self._update_status(f"[{entry_index+1}/{total_count}] {short_title}: {progress:.0f}%{speed_str}", 'downloading')
+                            
+                            self.root.update_idletasks()
+                        except Exception:
+                            pass
+                    elif d.get('status') == 'finished':
+                        self._update_status(f"[{entry_index+1}/{total_count}] Processing...", 'downloading')
+                return hook
+            
+            ydl_opts['progress_hooks'] = [make_progress_hook(i, entry)]
+            
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([entry['url']])
+                
+                completed_count += 1
+                
+            except Exception as e:
+                error_msg = str(e)
+                if "Download stopped by user" in error_msg:
+                    break
+                # Continue to next video on error
+        
+        # Final status
+        if self.stop_requested:
+            self._update_status("Download cancelled", 'ready')
+        elif completed_count == total_count:
+            self.progress_var.set(100)
+            self._update_status(f"Completed {completed_count}/{total_count} downloads!", 'success')
+            if total_count == 1:
+                messagebox.showinfo("Success", "Download completed successfully!")
             else:
-                self.status_label.config(text="Download failed!")
-                messagebox.showerror("Error", f"Download failed: {str(e)}")
-        finally:
-            self.reset_download_state()
-
-    def reset_download_state(self):
-        self.download_button.config(state='normal')
-        self.progress_var.set(0)
-        self.download_button.text = "Download"
-        self.download_button.draw()
-        self.downloading = False
-        self.stop_requested = False
-
-    def start_download(self):
+                messagebox.showinfo("Success", f"Downloaded {completed_count} videos successfully!")
+        else:
+            self._update_status(f"Completed {completed_count}/{total_count} (some failed)", 'error')
+        
+        self._reset_download_state()
+    
+    def _start_download(self):
+        """Start or stop download."""
         if not self.downloading:
+            url = self.url_entry.get().strip()
+            if not url:
+                messagebox.showerror("Error", "Please enter a video URL")
+                return
+            
             self.downloading = True
             self.stop_requested = False
-            self.download_button.text = "Stop"
-            self.download_button.draw()
-            threading.Thread(target=self.download_video, daemon=True).start()
+            self.download_btn.set_text("Stop")
+            threading.Thread(target=self._download_video, daemon=True).start()
         else:
+            self._stop_download()
+    
+    def _stop_download(self):
+        """Request download stop."""
+        if self.downloading:
             self.stop_requested = True
-            self.status_label.config(text="Stopping download...")
+            self._update_status("Stopping...", 'downloading')
+    
+    def _reset_download_state(self):
+        """Reset download UI state."""
+        self.download_btn.set_enabled(True)
+        self.progress_var.set(0)
+        self.download_btn.set_text("Download")
+        self.downloading = False
+        self.stop_requested = False
+    
+    def minimize_to_tray(self):
+        """Minimize application to system tray."""
+        self.root.withdraw()
+        
+        try:
+            tray_image = Image.open(ICON_PATH)
+        except Exception:
+            self.root.deiconify()
+            return
+        
+        menu = pystray.Menu(
+            pystray.MenuItem('Restore', self._restore_from_tray),
+            pystray.MenuItem('Exit', self.exit_app)
+        )
+        self.tray_icon = pystray.Icon(APP_NAME, tray_image, APP_NAME, menu)
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+    
+    def _restore_from_tray(self, icon=None, item=None):
+        """Restore window from tray."""
+        self._is_restoring = True
+        if icon:
+            icon.stop()
+        
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        self.root.after(10, self._finalize_restore)
+    
+    def _finalize_restore(self):
+        """Finalize restore from tray."""
+        self.root.overrideredirect(True)
+        self._is_restoring = False
+    
+    def exit_app(self, icon=None, item=None):
+        """Clean exit."""
+        if self.tray_icon:
+            self.tray_icon.stop()
+        self.root.destroy()
+
+
+# ============================================================================
+# ENTRY POINT
+# ============================================================================
 
 def main():
+    """Application entry point."""
     root = tk.Tk()
-    YouTubeDownloaderGUI(root)
+    app = YouTubeDownloaderGUI(root)
+    
+    # Set window size and position
     root.update_idletasks()
-    req_width = root.winfo_reqwidth()
-    req_height = root.winfo_reqheight()
-    root.geometry(f"{req_width}x{req_height}+100+100")
+    width = root.winfo_reqwidth()
+    height = root.winfo_reqheight()
+    
+    # Center on screen
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    x = (screen_w - width) // 2
+    y = (screen_h - height) // 2
+    
+    root.geometry(f"{width}x{height}+{x}+{y}")
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
