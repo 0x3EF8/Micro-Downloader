@@ -2,7 +2,7 @@
 
 A compact, modern GUI-based video downloader built with Python and Tkinter. Supports downloading videos and audio from YouTube, Facebook, Twitter, Instagram, and 1000+ other sites using [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 
-![Micro Downloader](assets/logo.png)
+![Micro Downloader](demo.png)
 
 ## Features
 
@@ -124,5 +124,6 @@ Micro-Downloader/
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).
+
 
 
