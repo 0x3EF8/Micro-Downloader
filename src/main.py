@@ -1,7 +1,7 @@
 """
 Micro Downloader - Compact Video/Audio Downloader
 Author: 0x3EF8
-Version: 2.3.0
+Version: 2.4.0
 License: MIT
 
 A modern compact GUI-based video downloader with bundled FFmpeg support.
@@ -33,7 +33,7 @@ if IS_WINDOWS:
 # ============================================================================
 
 APP_NAME = "Micro Downloader"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 APP_AUTHOR = "0x3EF8"
 APP_ID = f"{APP_AUTHOR}.MicroDownloader.{APP_VERSION}"
 
