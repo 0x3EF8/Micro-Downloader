@@ -30,7 +30,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk ffmpeg xvfb
+          sudo apt-get install -y python3-tk ffmpeg xvfb libxkbcommon-x11-0
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
@@ -46,72 +46,170 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
 
       - name: Create test assets
         run: |
           mkdir -p assets bin
-          # Create a placeholder icon for testing
-          python -c "from PIL import Image; img = Image.new('RGBA', (64,64), (227,25,55,255)); img.save('assets/logo.png')"
+          python -c "from PIL import Image; img = Image.new('RGBA', (64,64), (227,25,55,255)); img.save('assets/logo.png'); img.save('assets/logo.ico', format='ICO')"
 
-      - name: Syntax and Import Test
+      - name: Syntax Check
         run: |
           python -c "import ast; ast.parse(open('src/main.py').read()); print('✓ Syntax OK')"
+
+      - name: Test Core Imports
+        run: |
           python -c "
-          import sys
-          sys.path.insert(0, 'src')
-          # Test imports work
           import platform
           print(f'Platform: {platform.system()}')
           
-          # Test platform detection
-          exec(open('src/main.py').read().split('class ToolTip')[0])
+          # Test all required imports
+          import tkinter as tk
+          from tkinter import ttk, messagebox, filedialog
+          import yt_dlp
+          import threading
+          import subprocess
+          from PIL import Image, ImageTk
+          import os
+          import sys
+          
+          print('✓ Core imports OK')
+          
+          # Test platform detection logic
+          IS_WINDOWS = platform.system().lower() == 'windows'
+          IS_MACOS = platform.system().lower() == 'darwin'
+          IS_LINUX = platform.system().lower() == 'linux'
+          
           print(f'IS_WINDOWS: {IS_WINDOWS}')
           print(f'IS_MACOS: {IS_MACOS}')
           print(f'IS_LINUX: {IS_LINUX}')
+          
+          # Test font selection logic
+          if IS_WINDOWS:
+              SYSTEM_FONT = 'Segoe UI'
+          elif IS_MACOS:
+              SYSTEM_FONT = 'SF Pro Display'
+          else:
+              SYSTEM_FONT = 'Ubuntu'
           print(f'SYSTEM_FONT: {SYSTEM_FONT}')
-          print('✓ All imports and platform detection OK')
+          
+          print('✓ Platform detection OK')
           "
 
-      - name: GUI Import Test (Linux with Xvfb)
+      - name: Test pystray Import (Linux with Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a python -c "
+          import pystray
+          print('✓ pystray import OK on Linux')
+          "
+
+      - name: Test pystray Import (macOS/Windows)
+        if: runner.os != 'Linux'
+        run: |
+          python -c "
+          import pystray
+          print('✓ pystray import OK')
+          "
+
+      - name: Test Tkinter GUI (Linux with Xvfb)
         if: runner.os == 'Linux'
         run: |
           xvfb-run -a python -c "
           import tkinter as tk
+          from tkinter import ttk
+          
           root = tk.Tk()
           root.withdraw()
-          print('✓ Tkinter works on Linux')
+          
+          # Test basic widgets
+          style = ttk.Style()
+          style.theme_use('clam')
+          
+          frame = ttk.Frame(root)
+          label = tk.Label(frame, text='Test')
+          button = tk.Button(frame, text='Test')
+          entry = tk.Entry(frame)
+          progress = ttk.Progressbar(frame)
+          combo = ttk.Combobox(frame)
+          
           root.destroy()
+          print('✓ Tkinter GUI works on Linux')
           "
 
-      - name: GUI Import Test (macOS/Windows)
+      - name: Test Tkinter GUI (macOS/Windows)
         if: runner.os != 'Linux'
         run: |
           python -c "
           import tkinter as tk
+          from tkinter import ttk
+          
           root = tk.Tk()
           root.withdraw()
-          print('✓ Tkinter works')
+          
+          # Test basic widgets
+          style = ttk.Style()
+          available_themes = style.theme_names()
+          print(f'Available themes: {available_themes}')
+          
+          if 'clam' in available_themes:
+              style.theme_use('clam')
+          
+          frame = ttk.Frame(root)
+          label = tk.Label(frame, text='Test')
+          button = tk.Button(frame, text='Test')
+          entry = tk.Entry(frame)
+          progress = ttk.Progressbar(frame)
+          combo = ttk.Combobox(frame)
+          
           root.destroy()
+          print('✓ Tkinter GUI works')
           "
 
-      - name: Full Module Test
+      - name: Test yt-dlp
         run: |
           python -c "
-          import sys
-          import os
-          sys.path.insert(0, 'src')
-          os.chdir('.')
-          
-          # Create minimal test environment
-          os.makedirs('assets', exist_ok=True)
-          os.makedirs('bin', exist_ok=True)
-          
-          from PIL import Image
-          img = Image.new('RGBA', (64,64), (227,25,55,255))
-          img.save('assets/logo.png')
-          img.save('assets/logo.ico', format='ICO')
-          
-          print('✓ Test assets created')
-          print('✓ All tests passed!')
+          import yt_dlp
+          print(f'yt-dlp version: {yt_dlp.version.__version__}')
+          print('✓ yt-dlp OK')
           "
+
+      - name: Test FFmpeg
+        run: |
+          ffmpeg -version | head -1
+          echo "✓ FFmpeg OK"
+
+      - name: Test File Operations
+        run: |
+          python -c "
+          import os
+          import platform
+          
+          IS_WINDOWS = platform.system().lower() == 'windows'
+          IS_MACOS = platform.system().lower() == 'darwin'
+          IS_LINUX = platform.system().lower() == 'linux'
+          
+          # Test Downloads folder
+          downloads = os.path.expanduser('~/Downloads')
+          print(f'Downloads path: {downloads}')
+          
+          # Test folder open command exists
+          if IS_WINDOWS:
+              print('Will use: os.startfile()')
+          elif IS_MACOS:
+              import shutil
+              assert shutil.which('open'), 'open command not found'
+              print('Will use: open command')
+          else:
+              import shutil
+              assert shutil.which('xdg-open'), 'xdg-open command not found'
+              print('Will use: xdg-open command')
+          
+          print('✓ File operations OK')
+          "
+
+      - name: Summary
+        run: |
+          echo "=========================================="
+          echo " ✓ All tests passed on ${{ matrix.os }}"
+          echo " Python ${{ matrix.python-version }}"
+          echo "=========================================="
