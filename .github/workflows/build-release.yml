@@ -31,11 +31,11 @@ jobs:
 
       - name: Download FFmpeg for Windows
         run: |
-          mkdir -p bin
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
           Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
-          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
-          Copy-Item "ffmpeg_temp\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe" "bin\ffmpeg.exe"
-          Copy-Item "ffmpeg_temp\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe" "bin\ffprobe.exe"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp" -Force
+          Copy-Item "ffmpeg_temp\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe" "bin\ffmpeg.exe" -Force
+          Copy-Item "ffmpeg_temp\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe" "bin\ffprobe.exe" -Force
           Remove-Item -Recurse -Force "ffmpeg_temp"
           Remove-Item "ffmpeg.zip"
           echo "[OK] FFmpeg downloaded"
