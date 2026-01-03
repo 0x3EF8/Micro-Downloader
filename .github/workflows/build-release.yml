@@ -47,17 +47,10 @@ jobs:
           Remove-Item "deno.zip"
           echo "[OK] Deno downloaded"
 
-      - name: Create assets
+      - name: Verify assets
         run: |
-          python -c "
-          import os
-          os.makedirs('assets', exist_ok=True)
-          from PIL import Image
-          img = Image.new('RGBA', (64,64), (227,25,55,255))
-          img.save('assets/logo.png')
-          img.save('assets/logo.ico', format='ICO')
-          print('[OK] Assets created')
-          "
+          if (Test-Path "assets/logo.ico") { echo "[OK] logo.ico found" } else { throw "logo.ico not found" }
+          if (Test-Path "assets/logo.png") { echo "[OK] logo.png found" } else { throw "logo.png not found" }
 
       - name: Build with PyInstaller
         run: |
@@ -116,19 +109,23 @@ jobs:
           rm deno.zip
           echo "[OK] Deno downloaded"
 
-      - name: Create assets
+      - name: Create macOS icon from PNG
         run: |
-          python -c "
-          import os
-          os.makedirs('assets', exist_ok=True)
-          from PIL import Image
-          img = Image.new('RGBA', (64,64), (227,25,55,255))
-          img.save('assets/logo.png')
-          img.save('assets/logo.ico', format='ICO')
-          img_large = Image.new('RGBA', (512,512), (227,25,55,255))
-          img_large.save('assets/logo.icns', format='ICNS')
-          print('[OK] Assets created')
-          "
+          # Create iconset from logo.png
+          mkdir -p assets/logo.iconset
+          sips -z 16 16 assets/logo.png --out assets/logo.iconset/icon_16x16.png
+          sips -z 32 32 assets/logo.png --out assets/logo.iconset/icon_16x16@2x.png
+          sips -z 32 32 assets/logo.png --out assets/logo.iconset/icon_32x32.png
+          sips -z 64 64 assets/logo.png --out assets/logo.iconset/icon_32x32@2x.png
+          sips -z 128 128 assets/logo.png --out assets/logo.iconset/icon_128x128.png
+          sips -z 256 256 assets/logo.png --out assets/logo.iconset/icon_128x128@2x.png
+          sips -z 256 256 assets/logo.png --out assets/logo.iconset/icon_256x256.png
+          sips -z 512 512 assets/logo.png --out assets/logo.iconset/icon_256x256@2x.png
+          sips -z 512 512 assets/logo.png --out assets/logo.iconset/icon_512x512.png
+          cp assets/logo.png assets/logo.iconset/icon_512x512@2x.png
+          iconutil -c icns assets/logo.iconset -o assets/logo.icns
+          rm -rf assets/logo.iconset
+          echo "[OK] macOS icon created"
 
       - name: Build .app bundle with PyInstaller
         run: |
@@ -201,17 +198,10 @@ jobs:
           rm deno.zip
           echo "[OK] Deno downloaded"
 
-      - name: Create assets
+      - name: Verify assets
         run: |
-          python -c "
-          import os
-          os.makedirs('assets', exist_ok=True)
-          from PIL import Image
-          img = Image.new('RGBA', (64,64), (227,25,55,255))
-          img.save('assets/logo.png')
-          img.save('assets/logo.ico', format='ICO')
-          print('[OK] Assets created')
-          "
+          test -f assets/logo.png && echo "[OK] logo.png found" || exit 1
+          test -f assets/logo.ico && echo "[OK] logo.ico found" || exit 1
 
       - name: Build with PyInstaller
         run: |
