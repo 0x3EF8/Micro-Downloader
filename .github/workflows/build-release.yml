@@ -3,13 +3,13 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'  # Trigger on version tags like v1.0.0
-  workflow_dispatch:  # Allow manual trigger
+      - 'v*'
+  workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 1.0.0)'
+        description: 'Version number (e.g., 2.2.0)'
         required: true
-        default: '2.1.0'
+        default: '2.2.0'
 
 jobs:
   build-windows:
@@ -29,12 +29,22 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Download FFmpeg for Windows
+        run: |
+          mkdir -p bin
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile "ffmpeg.zip"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg_temp"
+          Copy-Item "ffmpeg_temp\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe" "bin\ffmpeg.exe"
+          Copy-Item "ffmpeg_temp\ffmpeg-master-latest-win64-gpl\bin\ffprobe.exe" "bin\ffprobe.exe"
+          Remove-Item -Recurse -Force "ffmpeg_temp"
+          Remove-Item "ffmpeg.zip"
+          echo "[OK] FFmpeg downloaded"
+
       - name: Create assets
         run: |
           python -c "
           import os
           os.makedirs('assets', exist_ok=True)
-          os.makedirs('bin', exist_ok=True)
           from PIL import Image
           img = Image.new('RGBA', (64,64), (227,25,55,255))
           img.save('assets/logo.png')
@@ -44,7 +54,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "MicroDownloader" --icon assets/logo.ico --add-data "assets;assets" src/main.py
+          pyinstaller --onefile --windowed --name "MicroDownloader" --icon assets/logo.ico --add-data "assets;assets" --add-data "bin;bin" src/main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -73,19 +83,27 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Download FFmpeg for macOS
+        run: |
+          mkdir -p bin
+          # Download FFmpeg for macOS (universal binary)
+          curl -L "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip" -o ffmpeg.zip
+          unzip ffmpeg.zip -d bin/
+          curl -L "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip" -o ffprobe.zip
+          unzip ffprobe.zip -d bin/
+          chmod +x bin/ffmpeg bin/ffprobe
+          rm ffmpeg.zip ffprobe.zip
+          echo "[OK] FFmpeg downloaded"
+
       - name: Create assets
         run: |
           python -c "
           import os
           os.makedirs('assets', exist_ok=True)
-          os.makedirs('bin', exist_ok=True)
           from PIL import Image
           img = Image.new('RGBA', (64,64), (227,25,55,255))
           img.save('assets/logo.png')
           img.save('assets/logo.ico', format='ICO')
-          
-          # Create ICNS for macOS
-          icon_sizes = [16, 32, 64, 128, 256, 512]
           img_large = Image.new('RGBA', (512,512), (227,25,55,255))
           img_large.save('assets/logo.icns', format='ICNS')
           print('[OK] Assets created')
@@ -93,20 +111,14 @@ jobs:
 
       - name: Build .app bundle with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "MicroDownloader" --icon assets/logo.icns --add-data "assets:assets" --osx-bundle-identifier "com.microdownloader.app" src/main.py
+          pyinstaller --onefile --windowed --name "MicroDownloader" --icon assets/logo.icns --add-data "assets:assets" --add-data "bin:bin" --osx-bundle-identifier "com.microdownloader.app" src/main.py
 
       - name: Create DMG
         run: |
-          # Create a folder for DMG contents
           mkdir -p dmg_contents
           cp -r dist/MicroDownloader.app dmg_contents/
-          
-          # Create symbolic link to Applications folder
           ln -s /Applications dmg_contents/Applications
-          
-          # Create DMG
           hdiutil create -volname "MicroDownloader" -srcfolder dmg_contents -ov -format UDZO MicroDownloader-macOS.dmg
-          
           echo "[OK] DMG created"
 
       - name: Upload DMG artifact
@@ -128,7 +140,7 @@ jobs:
           path: MicroDownloader-macOS.app.zip
 
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -141,7 +153,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk
+          sudo apt-get install -y python3-tk libfuse2
 
       - name: Install Python dependencies
         run: |
@@ -149,12 +161,22 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Download FFmpeg for Linux
+        run: |
+          mkdir -p bin
+          wget -q "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -O ffmpeg.tar.xz
+          tar -xf ffmpeg.tar.xz
+          cp ffmpeg-*-amd64-static/ffmpeg bin/
+          cp ffmpeg-*-amd64-static/ffprobe bin/
+          chmod +x bin/ffmpeg bin/ffprobe
+          rm -rf ffmpeg-*-amd64-static ffmpeg.tar.xz
+          echo "[OK] FFmpeg downloaded"
+
       - name: Create assets
         run: |
           python -c "
           import os
           os.makedirs('assets', exist_ok=True)
-          os.makedirs('bin', exist_ok=True)
           from PIL import Image
           img = Image.new('RGBA', (64,64), (227,25,55,255))
           img.save('assets/logo.png')
@@ -164,7 +186,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "MicroDownloader" --add-data "assets:assets" src/main.py
+          pyinstaller --onefile --name "MicroDownloader" --add-data "assets:assets" --add-data "bin:bin" src/main.py
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -182,17 +204,17 @@ jobs:
           cp assets/logo.png AppDir/usr/share/icons/hicolor/256x256/apps/microdownloader.png
           cp assets/logo.png AppDir/microdownloader.png
           
-          cat > AppDir/usr/share/applications/microdownloader.desktop << EOF
+          cat > AppDir/microdownloader.desktop << 'EOF'
           [Desktop Entry]
           Name=Micro Downloader
           Exec=MicroDownloader
           Icon=microdownloader
           Type=Application
-          Categories=Utility;Network;
+          Categories=Network;
           Comment=A lightweight video and audio downloader
           EOF
           
-          cp AppDir/usr/share/applications/microdownloader.desktop AppDir/microdownloader.desktop
+          cp AppDir/microdownloader.desktop AppDir/usr/share/applications/
           
           cat > AppDir/AppRun << 'EOF'
           #!/bin/bash
@@ -212,7 +234,7 @@ jobs:
 
       - name: Create AppImage
         run: |
-          ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir MicroDownloader-Linux.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir MicroDownloader-Linux.AppImage
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
@@ -290,11 +312,13 @@ jobs:
             
             A lightweight, cross-platform video and audio downloader.
             
+            **FFmpeg is bundled** - No additional installations required!
+            
             ### Downloads
             
             | Platform | File | Description |
             |----------|------|-------------|
-            | **Windows** | `MicroDownloader-Windows.exe` | Standalone executable |
+            | **Windows** | `MicroDownloader-Windows.exe` | Standalone executable (double-click to run) |
             | **macOS** | `MicroDownloader-macOS.dmg` | Disk image (drag to Applications) |
             | **macOS** | `MicroDownloader-macOS.app.zip` | App bundle (unzip and run) |
             | **Linux** | `MicroDownloader-Linux.AppImage` | AppImage (double-click to run) |
@@ -304,7 +328,7 @@ jobs:
             
             **Windows:**
             - Download `MicroDownloader-Windows.exe`
-            - Double-click to run
+            - Double-click to run (no installation needed)
             
             **macOS (DMG - Recommended):**
             - Download `MicroDownloader-macOS.dmg`
@@ -328,15 +352,13 @@ jobs:
             - Make executable: `chmod +x MicroDownloader-Linux`
             - Run: `./MicroDownloader-Linux`
             
-            ### Requirements
-            - FFmpeg (for audio conversion) - install separately if not bundled
-            
             ### Features
             - Download videos and audio from YouTube and 1000+ sites
             - Multiple format options (MP4, MP3, WEBM, etc.)
             - Quality selection (Best, 1080p, 720p, etc.)
             - Progress tracking with marquee title display
             - System tray integration
+            - **FFmpeg bundled** - works out of the box
             - Cross-platform support (Windows, macOS, Linux)
           draft: false
           prerelease: false

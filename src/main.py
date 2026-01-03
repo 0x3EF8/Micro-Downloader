@@ -1,10 +1,10 @@
 """
 Micro Downloader - Compact Video/Audio Downloader
 Author: 0x3EF8
-Version: 2.0.0
+Version: 2.3.0
 License: MIT
 
-A modern compact GUI-based video downloader with bundled FFmpeg and Deno support.
+A modern compact GUI-based video downloader with bundled FFmpeg support.
 """
 
 import os
@@ -33,7 +33,7 @@ if IS_WINDOWS:
 # ============================================================================
 
 APP_NAME = "Micro Downloader"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.3.0"
 APP_AUTHOR = "0x3EF8"
 APP_ID = f"{APP_AUTHOR}.MicroDownloader.{APP_VERSION}"
 
@@ -147,12 +147,42 @@ FFMPEG_PATH = get_binary_path("ffmpeg")
 DENO_PATH = get_binary_path("deno")
 
 
+def find_ffmpeg() -> str:
+    """
+    Find FFmpeg binary - first check bundled, then system PATH.
+    Returns the path to FFmpeg or empty string if not found.
+    """
+    import shutil
+    
+    # First check bundled FFmpeg
+    bundled = get_binary_path("ffmpeg")
+    if os.path.exists(bundled):
+        return bundled
+    
+    # Fallback to system FFmpeg
+    ffmpeg_name = "ffmpeg.exe" if IS_WINDOWS else "ffmpeg"
+    system_ffmpeg = shutil.which(ffmpeg_name)
+    if system_ffmpeg:
+        return system_ffmpeg
+    
+    return ""
+
+
 def check_dependencies() -> Tuple[bool, bool, str]:
     """
     Check all required dependencies.
     Returns (ffmpeg_ok, deno_ok, error_message)
     """
-    ffmpeg_ok, ffmpeg_err = verify_binary(FFMPEG_PATH, "-version", min_size=1_000_000)
+    global FFMPEG_PATH
+    
+    # Find FFmpeg (bundled or system)
+    FFMPEG_PATH = find_ffmpeg()
+    
+    if FFMPEG_PATH:
+        ffmpeg_ok, ffmpeg_err = verify_binary(FFMPEG_PATH, "-version", min_size=100_000)
+    else:
+        ffmpeg_ok, ffmpeg_err = False, "FFmpeg not found (bundled or in PATH)"
+    
     deno_ok, _ = verify_binary(DENO_PATH, "--version")
     
     error_msg = ""
