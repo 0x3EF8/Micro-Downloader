@@ -9,26 +9,11 @@ on:
       version:
         description: 'Version number (e.g., 1.0.0)'
         required: true
-        default: '1.0.0'
+        default: '2.1.0'
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            artifact_name: MicroDownloader-Windows.exe
-            asset_name: MicroDownloader-Windows.exe
-          - os: macos-latest
-            artifact_name: MicroDownloader-macOS
-            asset_name: MicroDownloader-macOS
-          - os: ubuntu-latest
-            artifact_name: MicroDownloader-Linux
-            asset_name: MicroDownloader-Linux
-
-    runs-on: ${{ matrix.os }}
-
+  build-windows:
+    runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -37,17 +22,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-tk ffmpeg
-
-      - name: Install system dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install python-tk ffmpeg
 
       - name: Install Python dependencies
         run: |
@@ -68,52 +42,186 @@ jobs:
           print('[OK] Assets created')
           "
 
-      - name: Build with PyInstaller (Windows)
-        if: runner.os == 'Windows'
+      - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "MicroDownloader-Windows" --icon assets/logo.ico --add-data "assets;assets" src/main.py
+          pyinstaller --onefile --windowed --name "MicroDownloader" --icon assets/logo.ico --add-data "assets;assets" src/main.py
 
-      - name: Build with PyInstaller (macOS)
-        if: runner.os == 'macOS'
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MicroDownloader-Windows
+          path: dist/MicroDownloader.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
         run: |
-          pyinstaller --onefile --windowed --name "MicroDownloader-macOS" --icon assets/logo.ico --add-data "assets:assets" src/main.py
+          brew install python-tk
 
-      - name: Build with PyInstaller (Linux)
-        if: runner.os == 'Linux'
+      - name: Install Python dependencies
         run: |
-          pyinstaller --onefile --windowed --name "MicroDownloader-Linux" --add-data "assets:assets" src/main.py
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
 
-      - name: Upload artifact (Windows)
-        if: runner.os == 'Windows'
+      - name: Create assets
+        run: |
+          python -c "
+          import os
+          os.makedirs('assets', exist_ok=True)
+          os.makedirs('bin', exist_ok=True)
+          from PIL import Image
+          img = Image.new('RGBA', (64,64), (227,25,55,255))
+          img.save('assets/logo.png')
+          img.save('assets/logo.ico', format='ICO')
+          
+          # Create ICNS for macOS
+          icon_sizes = [16, 32, 64, 128, 256, 512]
+          img_large = Image.new('RGBA', (512,512), (227,25,55,255))
+          img_large.save('assets/logo.icns', format='ICNS')
+          print('[OK] Assets created')
+          "
+
+      - name: Build .app bundle with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed --name "MicroDownloader" --icon assets/logo.icns --add-data "assets:assets" --osx-bundle-identifier "com.microdownloader.app" src/main.py
+
+      - name: Create DMG
+        run: |
+          # Create a folder for DMG contents
+          mkdir -p dmg_contents
+          cp -r dist/MicroDownloader.app dmg_contents/
+          
+          # Create symbolic link to Applications folder
+          ln -s /Applications dmg_contents/Applications
+          
+          # Create DMG
+          hdiutil create -volname "MicroDownloader" -srcfolder dmg_contents -ov -format UDZO MicroDownloader-macOS.dmg
+          
+          echo "[OK] DMG created"
+
+      - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: dist/MicroDownloader-Windows.exe
+          name: MicroDownloader-macOS-DMG
+          path: MicroDownloader-macOS.dmg
 
-      - name: Upload artifact (macOS)
-        if: runner.os == 'macOS'
+      - name: Zip .app bundle
+        run: |
+          cd dist
+          zip -r ../MicroDownloader-macOS.app.zip MicroDownloader.app
+          cd ..
+
+      - name: Upload .app.zip artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: dist/MicroDownloader-macOS.app
-          if-no-files-found: ignore
+          name: MicroDownloader-macOS-App
+          path: MicroDownloader-macOS.app.zip
 
-      - name: Upload artifact macOS binary
-        if: runner.os == 'macOS'
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Create assets
+        run: |
+          python -c "
+          import os
+          os.makedirs('assets', exist_ok=True)
+          os.makedirs('bin', exist_ok=True)
+          from PIL import Image
+          img = Image.new('RGBA', (64,64), (227,25,55,255))
+          img.save('assets/logo.png')
+          img.save('assets/logo.ico', format='ICO')
+          print('[OK] Assets created')
+          "
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed --name "MicroDownloader" --add-data "assets:assets" src/main.py
+
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MicroDownloader-macOS-binary
-          path: dist/MicroDownloader-macOS
+          name: MicroDownloader-Linux
+          path: dist/MicroDownloader
 
-      - name: Upload artifact (Linux)
-        if: runner.os == 'Linux'
+      - name: Create AppImage structure
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          
+          cp dist/MicroDownloader AppDir/usr/bin/
+          cp assets/logo.png AppDir/usr/share/icons/hicolor/256x256/apps/microdownloader.png
+          cp assets/logo.png AppDir/microdownloader.png
+          
+          cat > AppDir/usr/share/applications/microdownloader.desktop << EOF
+          [Desktop Entry]
+          Name=Micro Downloader
+          Exec=MicroDownloader
+          Icon=microdownloader
+          Type=Application
+          Categories=Utility;Network;
+          Comment=A lightweight video and audio downloader
+          EOF
+          
+          cp AppDir/usr/share/applications/microdownloader.desktop AppDir/microdownloader.desktop
+          
+          cat > AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          export PATH="${HERE}/usr/bin:${PATH}"
+          exec "${HERE}/usr/bin/MicroDownloader" "$@"
+          EOF
+          
+          chmod +x AppDir/AppRun
+          chmod +x AppDir/usr/bin/MicroDownloader
+
+      - name: Download appimagetool
+        run: |
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+      - name: Create AppImage
+        run: |
+          ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir MicroDownloader-Linux.AppImage
+
+      - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: dist/MicroDownloader-Linux
+          name: MicroDownloader-Linux-AppImage
+          path: MicroDownloader-Linux.AppImage
 
   release:
-    needs: build
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -135,20 +243,30 @@ jobs:
           mkdir -p release
           
           # Windows
-          if [ -f "artifacts/MicroDownloader-Windows.exe/MicroDownloader-Windows.exe" ]; then
-            cp artifacts/MicroDownloader-Windows.exe/MicroDownloader-Windows.exe release/
+          if [ -f "artifacts/MicroDownloader-Windows/MicroDownloader.exe" ]; then
+            cp artifacts/MicroDownloader-Windows/MicroDownloader.exe release/MicroDownloader-Windows.exe
           fi
           
-          # macOS binary
-          if [ -f "artifacts/MicroDownloader-macOS-binary/MicroDownloader-macOS" ]; then
-            cp artifacts/MicroDownloader-macOS-binary/MicroDownloader-macOS release/
-            chmod +x release/MicroDownloader-macOS
+          # macOS DMG
+          if [ -f "artifacts/MicroDownloader-macOS-DMG/MicroDownloader-macOS.dmg" ]; then
+            cp artifacts/MicroDownloader-macOS-DMG/MicroDownloader-macOS.dmg release/
           fi
           
-          # Linux
-          if [ -f "artifacts/MicroDownloader-Linux/MicroDownloader-Linux" ]; then
-            cp artifacts/MicroDownloader-Linux/MicroDownloader-Linux release/
+          # macOS App.zip
+          if [ -f "artifacts/MicroDownloader-macOS-App/MicroDownloader-macOS.app.zip" ]; then
+            cp artifacts/MicroDownloader-macOS-App/MicroDownloader-macOS.app.zip release/
+          fi
+          
+          # Linux binary
+          if [ -f "artifacts/MicroDownloader-Linux/MicroDownloader" ]; then
+            cp artifacts/MicroDownloader-Linux/MicroDownloader release/MicroDownloader-Linux
             chmod +x release/MicroDownloader-Linux
+          fi
+          
+          # Linux AppImage
+          if [ -f "artifacts/MicroDownloader-Linux-AppImage/MicroDownloader-Linux.AppImage" ]; then
+            cp artifacts/MicroDownloader-Linux-AppImage/MicroDownloader-Linux.AppImage release/
+            chmod +x release/MicroDownloader-Linux.AppImage
           fi
           
           ls -la release/
@@ -174,44 +292,59 @@ jobs:
             
             ### Downloads
             
-            | Platform | File |
-            |----------|------|
-            | Windows | `MicroDownloader-Windows.exe` |
-            | macOS | `MicroDownloader-macOS` |
-            | Linux | `MicroDownloader-Linux` |
+            | Platform | File | Description |
+            |----------|------|-------------|
+            | **Windows** | `MicroDownloader-Windows.exe` | Standalone executable |
+            | **macOS** | `MicroDownloader-macOS.dmg` | Disk image (drag to Applications) |
+            | **macOS** | `MicroDownloader-macOS.app.zip` | App bundle (unzip and run) |
+            | **Linux** | `MicroDownloader-Linux.AppImage` | AppImage (double-click to run) |
+            | **Linux** | `MicroDownloader-Linux` | Standalone binary |
             
             ### Installation
             
             **Windows:**
             - Download `MicroDownloader-Windows.exe`
-            - Run the executable
+            - Double-click to run
             
-            **macOS:**
-            - Download `MicroDownloader-macOS`
-            - Make executable: `chmod +x MicroDownloader-macOS`
-            - Run: `./MicroDownloader-macOS`
+            **macOS (DMG - Recommended):**
+            - Download `MicroDownloader-macOS.dmg`
+            - Double-click to open
+            - Drag `MicroDownloader.app` to Applications folder
             - If blocked by Gatekeeper: Right-click > Open
             
-            **Linux:**
+            **macOS (App Bundle):**
+            - Download `MicroDownloader-macOS.app.zip`
+            - Unzip the file
+            - Move `MicroDownloader.app` to Applications
+            - Double-click to run
+            
+            **Linux (AppImage - Recommended):**
+            - Download `MicroDownloader-Linux.AppImage`
+            - Make executable: `chmod +x MicroDownloader-Linux.AppImage`
+            - Double-click or run: `./MicroDownloader-Linux.AppImage`
+            
+            **Linux (Binary):**
             - Download `MicroDownloader-Linux`
             - Make executable: `chmod +x MicroDownloader-Linux`
             - Run: `./MicroDownloader-Linux`
             
             ### Requirements
-            - FFmpeg (for audio conversion) - bundled or install separately
+            - FFmpeg (for audio conversion) - install separately if not bundled
             
             ### Features
-            - Download videos and audio from YouTube and other platforms
-            - Multiple format options (MP4, MP3, etc.)
-            - Quality selection
+            - Download videos and audio from YouTube and 1000+ sites
+            - Multiple format options (MP4, MP3, WEBM, etc.)
+            - Quality selection (Best, 1080p, 720p, etc.)
             - Progress tracking with marquee title display
             - System tray integration
-            - Cross-platform support
+            - Cross-platform support (Windows, macOS, Linux)
           draft: false
           prerelease: false
           files: |
             release/MicroDownloader-Windows.exe
-            release/MicroDownloader-macOS
+            release/MicroDownloader-macOS.dmg
+            release/MicroDownloader-macOS.app.zip
+            release/MicroDownloader-Linux.AppImage
             release/MicroDownloader-Linux
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
