@@ -57,12 +57,12 @@ jobs:
           img = Image.new('RGBA', (64,64), (227,25,55,255))
           img.save('assets/logo.png')
           img.save('assets/logo.ico', format='ICO')
-          print('✓ Test assets created')
+          print('[OK] Test assets created')
           "
 
       - name: Syntax Check
         run: |
-          python -c "import ast; ast.parse(open('src/main.py').read()); print('✓ Syntax OK')"
+          python -c "import ast; ast.parse(open('src/main.py').read()); print('[OK] Syntax OK')"
 
       - name: Test Core Imports
         run: |
@@ -80,7 +80,7 @@ jobs:
           import os
           import sys
           
-          print('✓ Core imports OK')
+          print('[OK] Core imports OK')
           
           # Test platform detection logic
           IS_WINDOWS = platform.system().lower() == 'windows'
@@ -100,7 +100,7 @@ jobs:
               SYSTEM_FONT = 'Ubuntu'
           print(f'SYSTEM_FONT: {SYSTEM_FONT}')
           
-          print('✓ Platform detection OK')
+          print('[OK] Platform detection OK')
           "
 
       - name: Test pystray Import (Linux with Xvfb)
@@ -108,7 +108,7 @@ jobs:
         run: |
           xvfb-run -a python -c "
           import pystray
-          print('✓ pystray import OK on Linux')
+          print('[OK] pystray import OK on Linux')
           "
 
       - name: Test pystray Import (macOS/Windows)
@@ -116,7 +116,7 @@ jobs:
         run: |
           python -c "
           import pystray
-          print('✓ pystray import OK')
+          print('[OK] pystray import OK')
           "
 
       - name: Test Tkinter GUI (Linux with Xvfb)
@@ -141,7 +141,7 @@ jobs:
           combo = ttk.Combobox(frame)
           
           root.destroy()
-          print('✓ Tkinter GUI works on Linux')
+          print('[OK] Tkinter GUI works on Linux')
           "
 
       - name: Test Tkinter GUI (macOS/Windows)
@@ -170,7 +170,7 @@ jobs:
           combo = ttk.Combobox(frame)
           
           root.destroy()
-          print('✓ Tkinter GUI works')
+          print('[OK] Tkinter GUI works')
           "
 
       - name: Test yt-dlp
@@ -178,13 +178,13 @@ jobs:
           python -c "
           import yt_dlp
           print(f'yt-dlp version: {yt_dlp.version.__version__}')
-          print('✓ yt-dlp OK')
+          print('[OK] yt-dlp OK')
           "
 
       - name: Test FFmpeg
         run: |
           ffmpeg -version | head -1
-          echo "✓ FFmpeg OK"
+          echo "[OK] FFmpeg OK"
 
       - name: Test File Operations
         run: |
@@ -212,12 +212,12 @@ jobs:
               assert shutil.which('xdg-open'), 'xdg-open command not found'
               print('Will use: xdg-open command')
           
-          print('✓ File operations OK')
+          print('[OK] File operations OK')
           "
 
       - name: Summary
         run: |
           echo "=========================================="
-          echo " ✓ All tests passed on ${{ matrix.os }}"
+          echo " [OK] All tests passed on ${{ matrix.os }}"
           echo " Python ${{ matrix.python-version }}"
           echo "=========================================="
