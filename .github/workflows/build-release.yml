@@ -133,10 +133,15 @@ jobs:
 
       - name: Create DMG
         run: |
+          # Cleanup any existing DMG
+          rm -rf dmg_contents MicroDownloader-macOS.dmg || true
+          hdiutil detach /Volumes/MicroDownloader 2>/dev/null || true
+          
           mkdir -p dmg_contents
           cp -r dist/MicroDownloader.app dmg_contents/
           ln -s /Applications dmg_contents/Applications
           hdiutil create -volname "MicroDownloader" -srcfolder dmg_contents -ov -format UDZO MicroDownloader-macOS.dmg
+          rm -rf dmg_contents
           echo "[OK] DMG created"
 
       - name: Upload DMG artifact
