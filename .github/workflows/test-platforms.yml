@@ -49,8 +49,16 @@ jobs:
 
       - name: Create test assets
         run: |
-          mkdir -p assets bin
-          python -c "from PIL import Image; img = Image.new('RGBA', (64,64), (227,25,55,255)); img.save('assets/logo.png'); img.save('assets/logo.ico', format='ICO')"
+          python -c "
+          import os
+          os.makedirs('assets', exist_ok=True)
+          os.makedirs('bin', exist_ok=True)
+          from PIL import Image
+          img = Image.new('RGBA', (64,64), (227,25,55,255))
+          img.save('assets/logo.png')
+          img.save('assets/logo.ico', format='ICO')
+          print('✓ Test assets created')
+          "
 
       - name: Syntax Check
         run: |
