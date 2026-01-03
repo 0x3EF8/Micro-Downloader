@@ -49,12 +49,31 @@ jobs:
 
       - name: Verify assets
         run: |
-          if (Test-Path "assets/logo.ico") { echo "[OK] logo.ico found" } else { throw "logo.ico not found" }
-          if (Test-Path "assets/logo.png") { echo "[OK] logo.png found" } else { throw "logo.png not found" }
+          if (Test-Path "assets/logo.ico") { 
+            $file = Get-Item "assets/logo.ico"
+            echo "[OK] logo.ico found - Size: $($file.Length) bytes"
+            # Verify it's a valid ICO file (starts with 00 00 01 00)
+            $bytes = [System.IO.File]::ReadAllBytes("assets/logo.ico")
+            if ($bytes[0] -eq 0 -and $bytes[1] -eq 0 -and $bytes[2] -eq 1 -and $bytes[3] -eq 0) {
+              echo "[OK] logo.ico is a valid ICO file"
+            } else {
+              throw "logo.ico is not a valid ICO file"
+            }
+          } else { 
+            throw "logo.ico not found" 
+          }
+          if (Test-Path "assets/logo.png") { 
+            $file = Get-Item "assets/logo.png"
+            echo "[OK] logo.png found - Size: $($file.Length) bytes"
+          } else { 
+            throw "logo.png not found" 
+          }
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --windowed --name "MicroDownloader" --icon assets/logo.ico --add-data "assets;assets" --add-data "bin;bin" src/main.py
+          $iconPath = (Resolve-Path "assets/logo.ico").Path
+          echo "Using icon: $iconPath"
+          pyinstaller --onefile --windowed --name "MicroDownloader" --icon "$iconPath" --add-data "assets;assets" --add-data "bin;bin" src/main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
