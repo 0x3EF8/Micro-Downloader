@@ -15,10 +15,18 @@ import yt_dlp
 import threading
 import subprocess
 import platform
-import ctypes
 from PIL import Image, ImageTk
 import pystray
 from typing import Tuple
+
+# Platform detection
+IS_WINDOWS = platform.system().lower() == "windows"
+IS_MACOS = platform.system().lower() == "darwin"
+IS_LINUX = platform.system().lower() == "linux"
+
+# Import ctypes only on Windows (used for window styling)
+if IS_WINDOWS:
+    import ctypes
 
 # ============================================================================
 # CONSTANTS & CONFIGURATION
@@ -28,6 +36,18 @@ APP_NAME = "Micro Downloader"
 APP_VERSION = "2.0.0"
 APP_AUTHOR = "0x3EF8"
 APP_ID = f"{APP_AUTHOR}.MicroDownloader.{APP_VERSION}"
+
+# Cross-platform font selection
+def get_system_font() -> str:
+    """Get the appropriate system font for the current platform."""
+    if IS_WINDOWS:
+        return "Segoe UI"
+    elif IS_MACOS:
+        return "SF Pro Display"  # Falls back to Helvetica Neue if not available
+    else:  # Linux
+        return "Ubuntu"  # Falls back to DejaVu Sans if not available
+
+SYSTEM_FONT = get_system_font()
 
 # Color scheme
 COLORS = {
@@ -58,7 +78,7 @@ def resource_path(relative_path: str) -> str:
 
 def get_binary_path(binary_name: str) -> str:
     """Get the path to a bundled binary executable."""
-    if platform.system().lower() == "windows":
+    if IS_WINDOWS:
         binary_name = f"{binary_name}.exe"
     return resource_path(os.path.join("bin", binary_name))
 
@@ -80,7 +100,7 @@ def verify_binary(binary_path: str, version_arg: str = "-version", min_size: int
     
     try:
         kwargs = {'capture_output': True, 'timeout': 10}
-        if platform.system().lower() == "windows":
+        if IS_WINDOWS:
             kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
         
         result = subprocess.run([binary_path, version_arg], **kwargs)
@@ -109,7 +129,20 @@ def format_file_size(size_bytes: int) -> str:
 # PATHS & VERIFICATION
 # ============================================================================
 
-ICON_PATH = resource_path(os.path.join("assets", "logo.ico"))
+def get_icon_path() -> str:
+    """Get the appropriate icon path for the current platform."""
+    assets_dir = resource_path("assets")
+    if IS_WINDOWS:
+        icon_file = "logo.ico"
+    elif IS_MACOS:
+        # macOS prefers .icns, fallback to .png
+        icon_file = "logo.icns" if os.path.exists(os.path.join(assets_dir, "logo.icns")) else "logo.png"
+    else:
+        # Linux prefers .png
+        icon_file = "logo.png" if os.path.exists(os.path.join(assets_dir, "logo.png")) else "logo.ico"
+    return os.path.join(assets_dir, icon_file)
+
+ICON_PATH = get_icon_path()
 FFMPEG_PATH = get_binary_path("ffmpeg")
 DENO_PATH = get_binary_path("deno")
 
@@ -167,7 +200,7 @@ class ToolTip:
             background=COLORS['bg_light'],
             foreground=COLORS['text_primary'],
             relief='solid', borderwidth=1,
-            font=('Segoe UI', 9),
+            font=(SYSTEM_FONT, 9),
             padx=6, pady=3
         )
         label.pack()
@@ -208,7 +241,7 @@ class RoundedButton(tk.Frame):
             activeforeground=COLORS['text_primary'],
             relief='flat',
             bd=0,
-            font=('Segoe UI', 9, 'bold'),
+            font=(SYSTEM_FONT, 9, 'bold'),
             cursor='hand2',
             width=max(1, width // 10),
             height=1,
@@ -281,6 +314,82 @@ class StatusIndicator(tk.Canvas):
         self._draw()
 
 
+class MarqueeLabel(tk.Label):
+    """Label with marquee (scrolling) effect for long text like a news ticker."""
+    
+    def __init__(self, parent, max_width: int = 50, scroll_speed: int = 100, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.max_width = max_width
+        self.scroll_speed = scroll_speed
+        self.full_text = ""
+        self.base_text = ""  # Text without changing parts like percentage
+        self.scroll_position = 0
+        self.is_scrolling = False
+        self.scroll_job = None
+        self.display_text = ""
+    
+    def set_text(self, text: str):
+        """Set the label text, enabling marquee if text is too long."""
+        self.full_text = text
+        
+        # Extract base text (remove percentage and speed which change frequently)
+        # This prevents marquee from resetting on every progress update
+        import re
+        base = re.sub(r': \d+%.*$', '', text)
+        
+        if len(text) > self.max_width:
+            # Only reset scroll if the base content changed (not just percentage)
+            if base != self.base_text:
+                self.base_text = base
+                self.scroll_position = 0
+            
+            # Create text that loops: text + separator + text
+            self.display_text = text + "  ◆  " + text
+            self._start_marquee()
+        else:
+            self._stop_marquee()
+            self.base_text = base
+            self.config(text=text)
+    
+    def _start_marquee(self):
+        """Start the marquee scrolling effect."""
+        if not self.is_scrolling:
+            self.is_scrolling = True
+            self._scroll()
+    
+    def _stop_marquee(self):
+        """Stop the marquee scrolling effect."""
+        self.is_scrolling = False
+        if self.scroll_job:
+            self.after_cancel(self.scroll_job)
+            self.scroll_job = None
+    
+    def _scroll(self):
+        """Perform one step of the marquee scroll - continuous left scroll."""
+        if not self.is_scrolling:
+            return
+        
+        # Get current window of text to display
+        end_pos = self.scroll_position + self.max_width
+        visible_text = self.display_text[self.scroll_position:end_pos]
+        self.config(text=visible_text)
+        
+        # Move scroll position forward (scroll left)
+        self.scroll_position += 1
+        
+        # Reset when we've scrolled past the first copy of the text
+        reset_point = len(self.full_text) + 5  # length of "  ◆  "
+        if self.scroll_position >= reset_point:
+            self.scroll_position = 0
+        
+        self.scroll_job = self.after(self.scroll_speed, self._scroll)
+    
+    def destroy(self):
+        """Clean up before destroying."""
+        self._stop_marquee()
+        super().destroy()
+
+
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
@@ -310,31 +419,49 @@ class YouTubeDownloaderGUI:
         self._create_main_content()
         self._setup_bindings()
         
-        # Apply window style after UI is ready
-        self.root.after(50, self._initialize_window_style)
-        
         # Show dependency warning if needed
         if not self.ffmpeg_ok:
             self.root.after(100, lambda: self._show_dependency_error())
     
     def _setup_window(self):
         """Configure main window properties."""
+        # Hide window initially to prevent flickering
+        self.root.withdraw()
         self.root.config(bg=COLORS['bg_medium'])
         
-        if platform.system().lower() == "windows":
+        # Platform-specific window setup
+        if IS_WINDOWS:
             try:
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
             except Exception:
                 pass
+        elif IS_MACOS:
+            # macOS specific settings
+            try:
+                self.root.tk.call('tk', 'scaling', 2.0)  # Retina display support
+            except Exception:
+                pass
     
     def _setup_icon(self):
-        """Load and set application icon."""
+        """Load and set application icon (cross-platform)."""
+        self.logo_image = None
         try:
-            pil_image = Image.open(ICON_PATH).resize((20, 20), Image.Resampling.LANCZOS)
-            self.logo_image = ImageTk.PhotoImage(pil_image)
-            self.root.iconphoto(True, self.logo_image)
-            if os.path.exists(ICON_PATH):
-                self.root.iconbitmap(ICON_PATH)
+            # Try to load icon from various formats
+            icon_loaded = False
+            for icon_name in ["logo.ico", "logo.png", "logo.icns"]:
+                icon_path = resource_path(os.path.join("assets", icon_name))
+                if os.path.exists(icon_path):
+                    pil_image = Image.open(icon_path).resize((20, 20), Image.Resampling.LANCZOS)
+                    self.logo_image = ImageTk.PhotoImage(pil_image)
+                    self.root.iconphoto(True, self.logo_image)
+                    icon_loaded = True
+                    break
+            
+            # Windows-specific: set .ico file for taskbar
+            if IS_WINDOWS:
+                ico_path = resource_path(os.path.join("assets", "logo.ico"))
+                if os.path.exists(ico_path):
+                    self.root.iconbitmap(ico_path)
         except Exception:
             self.logo_image = None
     
@@ -348,7 +475,7 @@ class YouTubeDownloaderGUI:
             'Modern.TLabel',
             background=COLORS['bg_medium'],
             foreground=COLORS['text_primary'],
-            font=('Segoe UI', 10)
+            font=(SYSTEM_FONT, 10)
         )
         self.style.configure(
             "Modern.Horizontal.TProgressbar",
@@ -402,7 +529,7 @@ class YouTubeDownloaderGUI:
         self.title_label = tk.Label(
             self.title_bar, text=title_text,
             bg=COLORS['bg_dark'], fg=COLORS['text_primary'],
-            font=('Segoe UI', 10, 'bold')
+            font=(SYSTEM_FONT, 10, 'bold')
         )
         self.title_label.pack(side='left', padx=(0, 5))
         ToolTip(self.title_label, f"Developed by {APP_AUTHOR}", delay=300)
@@ -412,7 +539,7 @@ class YouTubeDownloaderGUI:
             'bg': COLORS['bg_dark'],
             'fg': COLORS['text_primary'],
             'bd': 0,
-            'font': ('Segoe UI', 10),
+            'font': (SYSTEM_FONT, 10),
             'width': 3,
             'activeforeground': COLORS['text_primary']
         }
@@ -448,7 +575,7 @@ class YouTubeDownloaderGUI:
             url_frame, width=30,
             bg=COLORS['bg_light'], fg=COLORS['text_primary'],
             insertbackground=COLORS['text_primary'],
-            relief='flat', font=('Segoe UI', 10),
+            relief='flat', font=(SYSTEM_FONT, 10),
             highlightthickness=1, highlightcolor=COLORS['accent'],
             highlightbackground=COLORS['border']
         )
@@ -469,11 +596,12 @@ class YouTubeDownloaderGUI:
         
         ttk.Label(save_frame, text="Save:", style='Modern.TLabel').pack(side='left')
         
-        self.save_path = tk.StringVar(value=os.path.expanduser("~/Downloads"))
+        default_path = os.path.join(os.path.expanduser("~/Downloads"), "mdl").replace("\\", "/")
+        self.save_path = tk.StringVar(value=default_path)
         self.location_entry = tk.Entry(
             save_frame, textvariable=self.save_path, width=28,
             bg=COLORS['bg_light'], fg=COLORS['text_primary'],
-            relief='flat', font=('Segoe UI', 10),
+            relief='flat', font=(SYSTEM_FONT, 10),
             highlightthickness=1, highlightbackground=COLORS['border']
         )
         self.location_entry.pack(side='left', padx=(5, 5), fill='x', expand=True)
@@ -497,7 +625,7 @@ class YouTubeDownloaderGUI:
             'selectcolor': COLORS['accent'],
             'activebackground': COLORS['bg_medium'],
             'activeforeground': COLORS['text_primary'],
-            'font': ('Segoe UI', 9),
+            'font': (SYSTEM_FONT, 9),
             'highlightthickness': 0
         }
         
@@ -525,7 +653,7 @@ class YouTubeDownloaderGUI:
         self.quality_combo = ttk.Combobox(
             quality_frame, textvariable=self.quality_var,
             state='readonly', style='Dark.TCombobox',
-            font=('Segoe UI', 10), width=25
+            font=(SYSTEM_FONT, 10), width=25
         )
         self.quality_combo.pack(side='left', padx=(5, 0), fill='x', expand=True)
         self._update_quality_options()
@@ -555,42 +683,44 @@ class YouTubeDownloaderGUI:
         self.status_indicator = StatusIndicator(status_frame, size=8)
         self.status_indicator.pack(side='left', padx=(0, 5))
         
-        self.status_label = tk.Label(
-            status_frame, text="Ready",
+        self.status_label = MarqueeLabel(
+            status_frame, max_width=50, scroll_speed=150,
+            text="Ready",
             bg=COLORS['bg_medium'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 8)
+            font=(SYSTEM_FONT, 8)
         )
         self.status_label.pack(side='left')
     
     def _setup_bindings(self):
-        """Setup event bindings."""
+        """Setup event bindings (cross-platform keyboard shortcuts)."""
         self.title_bar.bind('<Button-1>', self._click_title_bar)
         self.title_bar.bind('<B1-Motion>', self._drag_window)
         self.title_label.bind('<Button-1>', self._click_title_bar)
         self.title_label.bind('<B1-Motion>', self._drag_window)
         
-        # Keyboard shortcuts
+        # Keyboard shortcuts - support both Ctrl (Windows/Linux) and Command (macOS)
         self.root.bind('<Control-v>', lambda e: self._paste_url())
         self.root.bind('<Return>', lambda e: self._start_download())
         self.root.bind('<Escape>', lambda e: self._stop_download())
+        
+        # macOS uses Command key instead of Control
+        if IS_MACOS:
+            self.root.bind('<Command-v>', lambda e: self._paste_url())
     
     def _initialize_window_style(self):
-        """Initialize custom window style."""
-        if self._style_applied:
-            return
-        
-        self.root.overrideredirect(True)
-        
-        if platform.system().lower() == "windows":
-            self.root.after(10, self._apply_window_style)
+        """Initialize custom window style - kept for compatibility."""
+        pass
     
     def _apply_window_style(self):
-        """Apply Windows-specific window style for taskbar visibility."""
+        """Apply platform-specific window style for taskbar/dock visibility."""
         if self._style_applied:
             return
         
-        if platform.system().lower() == "windows":
+        if IS_WINDOWS:
             try:
+                # Need to update to get window handle
+                self.root.update_idletasks()
+                
                 hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
                 if hwnd == 0:
                     hwnd = self.root.winfo_id()
@@ -615,13 +745,24 @@ class YouTubeDownloaderGUI:
                 self._style_applied = True
             except Exception:
                 pass
+        elif IS_MACOS or IS_LINUX:
+            # macOS and Linux don't need special handling for dock/taskbar
+            self._style_applied = True
     
     def _show_dependency_error(self):
-        """Show dependency error message."""
+        """Show dependency error message (cross-platform)."""
+        ffmpeg_name = "ffmpeg.exe" if IS_WINDOWS else "ffmpeg"
+        if IS_MACOS:
+            install_hint = "Install via Homebrew: brew install ffmpeg"
+        elif IS_LINUX:
+            install_hint = "Install via package manager:\n  Ubuntu/Debian: sudo apt install ffmpeg\n  Fedora: sudo dnf install ffmpeg\n  Arch: sudo pacman -S ffmpeg"
+        else:
+            install_hint = "Download from: https://ffmpeg.org/download.html"
+        
         msg = (
             f"FFmpeg is required but not found.\n\n"
-            f"Please place ffmpeg.exe in:\n{os.path.dirname(FFMPEG_PATH)}\n\n"
-            f"Download from: https://ffmpeg.org/download.html"
+            f"Please place {ffmpeg_name} in:\n{os.path.dirname(FFMPEG_PATH)}\n\n"
+            f"{install_hint}"
         )
         messagebox.showerror("Missing Dependency", msg)
     
@@ -687,7 +828,7 @@ class YouTubeDownloaderGUI:
     
     def _update_status(self, text: str, status: str = 'ready'):
         """Update status bar."""
-        self.status_label.config(text=text)
+        self.status_label.set_text(text)
         self.status_indicator.set_status(status)
     
     def _download_video(self):
@@ -797,16 +938,12 @@ class YouTubeDownloaderGUI:
                             progress = (downloaded / total) * 100 if total else 0
                             
                             title = d.get('info_dict', {}).get('title', entry_data['title'])
-                            if len(title) > 35:
-                                short_title = title[:35] + "..."
-                            else:
-                                short_title = title
                             
                             speed = d.get('speed')
                             speed_str = f" - {format_file_size(int(speed))}/s" if speed else ""
                             
                             self.progress_var.set(progress)
-                            self._update_status(f"[{entry_index+1}/{total_count}] {short_title}: {progress:.0f}%{speed_str}", 'downloading')
+                            self._update_status(f"[{entry_index+1}/{total_count}] {title}: {progress:.0f}%{speed_str}", 'downloading')
                             
                             self.root.update_idletasks()
                         except Exception:
@@ -830,19 +967,38 @@ class YouTubeDownloaderGUI:
                 # Continue to next video on error
         
         # Final status
+        save_folder = self.save_path.get()
         if self.stop_requested:
             self._update_status("Download cancelled", 'ready')
         elif completed_count == total_count:
             self.progress_var.set(100)
             self._update_status(f"Completed {completed_count}/{total_count} downloads!", 'success')
             if total_count == 1:
-                messagebox.showinfo("Success", "Download completed successfully!")
+                result = messagebox.askyesno("Success", "Download completed successfully!\n\nOpen download folder?")
             else:
-                messagebox.showinfo("Success", f"Downloaded {completed_count} videos successfully!")
+                result = messagebox.askyesno("Success", f"Downloaded {completed_count} videos successfully!\n\nOpen download folder?")
+            if result:
+                self._open_folder(save_folder)
         else:
             self._update_status(f"Completed {completed_count}/{total_count} (some failed)", 'error')
         
         self._reset_download_state()
+    
+    def _open_folder(self, folder_path: str):
+        """Open the folder in file explorer (cross-platform)."""
+        try:
+            # Create folder if it doesn't exist
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+            
+            if IS_WINDOWS:
+                os.startfile(folder_path)
+            elif IS_MACOS:
+                subprocess.run(["open", folder_path], check=False)
+            elif IS_LINUX:
+                subprocess.run(["xdg-open", folder_path], check=False)
+        except Exception:
+            pass
     
     def _start_download(self):
         """Start or stop download."""
@@ -922,7 +1078,7 @@ def main():
     root = tk.Tk()
     app = YouTubeDownloaderGUI(root)
     
-    # Set window size and position
+    # Set window size and position before showing
     root.update_idletasks()
     width = root.winfo_reqwidth()
     height = root.winfo_reqheight()
@@ -933,7 +1089,15 @@ def main():
     x = (screen_w - width) // 2
     y = (screen_h - height) // 2
     
+    # Set geometry first
     root.geometry(f"{width}x{height}+{x}+{y}")
+    
+    # Apply overrideredirect and window styles before showing
+    root.overrideredirect(True)
+    app._apply_window_style()
+    
+    # Now show the window - no flickering
+    root.deiconify()
     root.mainloop()
 
 

@@ -6,6 +6,7 @@ A compact, modern GUI-based video downloader built with Python and Tkinter. Supp
 
 ## Features
 
+- **Cross-Platform:** Runs on Windows, macOS, and Linux
 - **Multi-Platform Support:** Download from YouTube, Facebook, Twitter, Instagram, TikTok, and 1000+ sites
 - **Video & Audio Downloads:** Choose between downloading videos (MP4) or extracting audio (MP3)
 - **Quality Selection:** Multiple quality options from 144p to 4K for video, and up to 320kbps for audio
@@ -17,10 +18,15 @@ A compact, modern GUI-based video downloader built with Python and Tkinter. Supp
 
 Get the latest release from the [Releases](https://github.com/0x3EF8/Micro-Downloader/releases) page.
 
-**[⬇️ Download MicroDownloader.exe](https://github.com/0x3EF8/Micro-Downloader/releases/latest)**
+| Platform | Download |
+|----------|----------|
+| Windows | [⬇️ MicroDownloader.exe](https://github.com/0x3EF8/Micro-Downloader/releases/latest) |
+| macOS | [⬇️ MicroDownloader.app](https://github.com/0x3EF8/Micro-Downloader/releases/latest) |
+| Linux | [⬇️ MicroDownloader](https://github.com/0x3EF8/Micro-Downloader/releases/latest) |
 
 ## Installation (Development)
 
+### Windows
 1. **Clone the Repository:**
    ```bash
    git clone https://github.com/0x3EF8/Micro-Downloader.git
@@ -41,6 +47,58 @@ Get the latest release from the [Releases](https://github.com/0x3EF8/Micro-Downl
 4. **Run:**
    ```bash
    python src/main.py
+   ```
+
+### macOS
+1. **Clone and Install:**
+   ```bash
+   git clone https://github.com/0x3EF8/Micro-Downloader.git
+   cd Micro-Downloader
+   pip3 install -r requirements.txt
+   ```
+
+2. **Install FFmpeg & Deno:**
+   ```bash
+   # Using Homebrew
+   brew install ffmpeg deno
+   
+   # Or place binaries in bin/ folder:
+   # bin/ffmpeg
+   # bin/deno
+   ```
+
+3. **Run:**
+   ```bash
+   python3 src/main.py
+   ```
+
+### Linux
+1. **Clone and Install:**
+   ```bash
+   git clone https://github.com/0x3EF8/Micro-Downloader.git
+   cd Micro-Downloader
+   pip3 install -r requirements.txt
+   ```
+
+2. **Install FFmpeg & Deno:**
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install ffmpeg
+   curl -fsSL https://deno.land/install.sh | sh
+   
+   # Fedora
+   sudo dnf install ffmpeg
+   curl -fsSL https://deno.land/install.sh | sh
+   
+   # Arch
+   sudo pacman -S ffmpeg deno
+   
+   # Or place binaries in bin/ folder
+   ```
+
+3. **Run:**
+   ```bash
+   python3 src/main.py
    ```
 
 ## Building from Source
@@ -64,7 +122,7 @@ The executable will be created at `src/dist/MicroDownloader.exe`
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+V` | Paste URL |
+| `Ctrl+V` / `Cmd+V` | Paste URL |
 | `Enter` | Start Download |
 | `Escape` | Stop Download |
 
@@ -113,9 +171,12 @@ Micro-Downloader/
 
 | Issue | Solution |
 |-------|----------|
-| FFmpeg not found | Place `ffmpeg.exe` in the `bin/` folder |
+| FFmpeg not found (Windows) | Place `ffmpeg.exe` in the `bin/` folder |
+| FFmpeg not found (macOS) | Run `brew install ffmpeg` or place `ffmpeg` in `bin/` |
+| FFmpeg not found (Linux) | Run `sudo apt install ffmpeg` (Ubuntu) or equivalent |
 | Download fails | Check your internet connection and verify the URL is valid |
 | Site not supported | Update yt-dlp: `pip install -U yt-dlp` |
+| UI looks wrong on macOS | Ensure you have the latest Tk version: `brew install python-tk` |
 
 ## Author
 
