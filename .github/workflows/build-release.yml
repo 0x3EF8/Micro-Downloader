@@ -40,6 +40,13 @@ jobs:
           Remove-Item "ffmpeg.zip"
           echo "[OK] FFmpeg downloaded"
 
+      - name: Download Deno for Windows
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -OutFile "deno.zip"
+          Expand-Archive -Path "deno.zip" -DestinationPath "bin" -Force
+          Remove-Item "deno.zip"
+          echo "[OK] Deno downloaded"
+
       - name: Create assets
         run: |
           python -c "
@@ -94,6 +101,20 @@ jobs:
           chmod +x bin/ffmpeg bin/ffprobe
           rm ffmpeg.zip ffprobe.zip
           echo "[OK] FFmpeg downloaded"
+
+      - name: Download Deno for macOS
+        run: |
+          # Detect architecture
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ]; then
+            curl -L "https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip" -o deno.zip
+          else
+            curl -L "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-apple-darwin.zip" -o deno.zip
+          fi
+          unzip deno.zip -d bin/
+          chmod +x bin/deno
+          rm deno.zip
+          echo "[OK] Deno downloaded"
 
       - name: Create assets
         run: |
@@ -171,6 +192,14 @@ jobs:
           chmod +x bin/ffmpeg bin/ffprobe
           rm -rf ffmpeg-*-amd64-static ffmpeg.tar.xz
           echo "[OK] FFmpeg downloaded"
+
+      - name: Download Deno for Linux
+        run: |
+          wget -q "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip" -O deno.zip
+          unzip deno.zip -d bin/
+          chmod +x bin/deno
+          rm deno.zip
+          echo "[OK] Deno downloaded"
 
       - name: Create assets
         run: |
@@ -312,7 +341,7 @@ jobs:
             
             A lightweight, cross-platform video and audio downloader.
             
-            **FFmpeg is bundled** - No additional installations required!
+            **FFmpeg & Deno bundled** - No additional installations required!
             
             ### Downloads
             
@@ -358,7 +387,8 @@ jobs:
             - Quality selection (Best, 1080p, 720p, etc.)
             - Progress tracking with marquee title display
             - System tray integration
-            - **FFmpeg bundled** - works out of the box
+            - **FFmpeg bundled** - audio conversion works out of the box
+            - **Deno bundled** - improved site compatibility via JS runtime
             - Cross-platform support (Windows, macOS, Linux)
           draft: false
           prerelease: false
